@@ -506,7 +506,7 @@ function AdminModalInner({ open, onClose }) {
                     <p className="text-[11px] text-ink-400 font-semibold uppercase">WebSocket Hub</p>
                     <div className="flex items-center gap-1.5">
                       <span className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                      <p className="text-xs font-bold text-ink-800">{connected ? 'Connected (:5200)' : 'Connecting...'}</p>
+                      <p className="text-xs font-bold text-ink-800">{connected ? 'Connected (Active)' : 'Connecting...'}</p>
                     </div>
                   </div>
 

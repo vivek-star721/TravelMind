@@ -7,6 +7,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { useTrip, useUI, activeTrip, toast } from '../store'
 import { uid } from '../lib/utils'
 import { executeTool, applyUndoOp, WRITE_TOOLS, hooks } from './toolExecutors'
+import { formatErrorMessage } from '../lib/errorUtils'
 import i18n from '../i18n'
 
 const AGENT_PORT = import.meta.env.VITE_AGENT_PORT ?? 5200
@@ -14,6 +15,9 @@ const AGENT_PORT = import.meta.env.VITE_AGENT_PORT ?? 5200
 let connectionAttempts = 0
 
 function getWsUrl() {
+  if (import.meta.env.VITE_AGENT_URL) {
+    return import.meta.env.VITE_AGENT_URL
+  }
   const isHttps = typeof location !== 'undefined' && location.protocol === 'https:'
   const proto = isHttps ? 'wss:' : 'ws:'
   const host = typeof location !== 'undefined' ? location.hostname : '127.0.0.1'
@@ -290,7 +294,7 @@ function persistChat() {
   const tripId = useTrip.getState().activeId
   if (!s.chatId || !tripId) return
   const firstUser = s.messages.find((m) => m.role === 'user')
-  useChats.getState().saveChat(tripId, {
+  const chatPayload = {
     id: s.chatId,
     engine: s.engine,
     model: s.models[s.engine],
@@ -298,7 +302,30 @@ function persistChat() {
     title: (firstUser?.text ?? i18n.t('store.conversation')).slice(0, 70),
     updatedAt: Date.now(),
     messages: s.messages,
-  })
+  }
+  useChats.getState().saveChat(tripId, chatPayload)
+
+  // Persist to Neon Postgres in background if user is authenticated
+  if (s.messages.length > 0) {
+    try {
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          id: s.chatId,
+          tripId,
+          title: chatPayload.title,
+          messages: s.messages,
+        }),
+      }).catch(() => {})
+    } catch {
+      // ignore network errors for background sync
+    }
+  }
 }
 
 /* executor hooks: live stepper + view flip on start_planning */
@@ -368,9 +395,168 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
 
 let ws = null
 let retryTimer = null
+let currentTransport = 'ws' // 'ws' | 'http'
+let httpAbortController = null
+
+async function connectHttpAgent() {
+  try {
+    const res = await fetch('/api/agent/status', {
+      headers: {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    currentTransport = 'http'
+    useAgentChat.setState({
+      connected: true,
+      connecting: false,
+      connectionError: null,
+      providerStatus: data.providers || null,
+    })
+    console.log('[agent/client] Connected to Ulisse Serverless Agent via /api/agent')
+    return true
+  } catch (err) {
+    console.warn('[agent/client] /api/agent/status check failed:', err)
+    useAgentChat.setState({
+      connected: false,
+      connecting: false,
+      connectionError: formatErrorMessage(err, 'Failed to connect to agent server'),
+    })
+    return false
+  }
+}
+
+async function sendViaHttpStream(payload) {
+  if (httpAbortController) {
+    httpAbortController.abort()
+  }
+  httpAbortController = new AbortController()
+
+  useAgentChat.setState({ thinking: true, streamText: '', edits: [], progress: [] })
+  handleEvent({ type: 'turn_start' })
+
+  try {
+    const activeT = activeTrip(useTrip.getState())
+    const res = await fetch('/api/agent/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        ...payload,
+        trip: activeT,
+      }),
+      signal: httpAbortController.signal,
+    })
+
+    if (!res.ok) {
+      let errMessage = `Server error (${res.status})`
+      try {
+        const errJson = await res.json()
+        errMessage = formatErrorMessage(errJson, errMessage)
+      } catch {
+        // ignore
+      }
+      throw new Error(errMessage)
+    }
+
+    const reader = res.body?.getReader()
+    if (!reader) {
+      throw new Error('ReadableStream not supported on this browser')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+
+      for (const block of parts) {
+        for (const line of block.split('\n')) {
+          const trimmed = line.trim()
+          if (trimmed.startsWith('data: ')) {
+            const jsonStr = trimmed.slice(6).trim()
+            if (jsonStr) {
+              try {
+                const event = JSON.parse(jsonStr)
+                handleEvent(event)
+              } catch (e) {
+                console.error('[agent/http] Malformed SSE event:', e, jsonStr)
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (!httpAbortController.signal.aborted) {
+      console.error('[agent/http] Chat stream error:', err)
+      const formatted = formatErrorMessage(err, 'Failed to complete itinerary turn')
+      handleEvent({
+        type: 'agent_error',
+        error: formatted,
+        canUseFree: true,
+      })
+    }
+  } finally {
+    useAgentChat.setState({ thinking: false })
+    handleEvent({ type: 'turn_end' })
+    httpAbortController = null
+
+    // Auto-sync updated trip to database if user has an active trip
+    try {
+      const updatedTrip = activeTrip(useTrip.getState())
+      if (updatedTrip?.id) {
+        fetch(`/api/trips/${updatedTrip.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          credentials: 'include',
+          body: JSON.stringify(updatedTrip),
+        }).catch(() => {})
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
 
 function sendWs(obj) {
   if (DEMO) { demoAgent?.send(obj); return }
+  if (currentTransport === 'http') {
+    if (obj.type === 'chat') {
+      sendViaHttpStream(obj)
+    } else if (obj.type === 'stop') {
+      if (httpAbortController) {
+        httpAbortController.abort()
+        httpAbortController = null
+      }
+      useAgentChat.setState({ thinking: false })
+    } else if (obj.type === 'models_get' || obj.type === 'providers_get') {
+      fetch('/api/agent/status', {
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'include',
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.providers) useAgentChat.setState({ providerStatus: data.providers })
+        })
+        .catch(() => {})
+    }
+    return
+  }
+
   if (ws?.readyState === 1) ws.send(JSON.stringify(obj))
 }
 
@@ -505,6 +691,19 @@ export function connectAgent(force = false) {
     })
     return
   }
+
+  const isLocalDev = typeof location !== 'undefined' &&
+    (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  const hasCustomAgentUrl = Boolean(import.meta.env.VITE_AGENT_URL)
+
+  // In production (Vercel) without custom remote WebSocket URL:
+  // Use Serverless HTTP streaming directly!
+  if (!isLocalDev && !hasCustomAgentUrl) {
+    useAgentChat.setState({ connecting: true, connectionError: null })
+    connectHttpAgent()
+    return
+  }
+
   if (!force && ws && (ws.readyState === 0 || ws.readyState === 1)) return
   if (force && ws) {
     try { ws.close() } catch { /* ignore */ }
@@ -516,13 +715,15 @@ export function connectAgent(force = false) {
   try {
     ws = new WebSocket(wsUrl)
   } catch (err) {
-    console.error(`[agent/socket] WebSocket connection constructor failed:`, err)
-    useAgentChat.setState({ connected: false, connecting: false, connectionError: err.message || 'Connection failed' })
-    scheduleRetry()
+    console.warn(`[agent/socket] WebSocket constructor failed, trying HTTP fallback:`, err)
+    connectHttpAgent().then((ok) => {
+      if (!ok) scheduleRetry()
+    })
     return
   }
 
   ws.onopen = () => {
+    currentTransport = 'ws'
     console.log(`[agent/socket] Connected successfully to ${wsUrl}`)
     useAgentChat.setState({ connected: true, connecting: false, connectionError: null })
     sendWs({ type: 'models_get' })
@@ -532,13 +733,21 @@ export function connectAgent(force = false) {
     try { handleEvent(JSON.parse(e.data)) } catch { /* ignore malformed frames */ }
   }
   ws.onclose = (ev) => {
-    console.warn(`[agent/socket] Disconnected (code: ${ev.code}, reason: ${ev.reason || 'normal'})`)
-    useAgentChat.setState({ connected: false, connecting: false, thinking: false })
-    scheduleRetry()
+    console.warn(`[agent/socket] WS Disconnected (code: ${ev.code}). Trying HTTP fallback...`)
+    connectHttpAgent().then((ok) => {
+      if (!ok) {
+        useAgentChat.setState({ connected: false, connecting: false, thinking: false })
+        scheduleRetry()
+      }
+    })
   }
   ws.onerror = (err) => {
-    console.error(`[agent/socket] Connection error:`, err)
-    useAgentChat.setState({ connectionError: 'Failed to connect to agent server' })
+    console.warn(`[agent/socket] WS error. Trying HTTP fallback:`, err)
+    connectHttpAgent().then((ok) => {
+      if (!ok) {
+        useAgentChat.setState({ connectionError: 'Failed to connect to agent server' })
+      }
+    })
     ws?.close()
   }
 }

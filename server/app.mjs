@@ -12,6 +12,7 @@ import { createAuthRouter } from './auth/routes.mjs'
 import { createAdminRouter } from './admin/routes.mjs'
 import { createTripRouter } from './trips/routes.mjs'
 import { handleWorldPlacesHttp } from './worldPlaces.mjs'
+import { handleAgentStatus, handleAgentChat, createChatsRouter } from './agent/chat.mjs'
 import { applySecurityHeaders } from './middleware/headers.mjs'
 import { authRateLimiter, placesRateLimiter } from './middleware/rateLimit.mjs'
 import { attachRequestId, handleServerError } from './middleware/errorHandler.mjs'
@@ -20,6 +21,7 @@ let cachedDb = null
 let authRouter = null
 let adminRouter = null
 let tripRouter = null
+let chatsRouter = null
 let schemaEnsured = false
 
 export async function ensureSchema(db) {
@@ -54,8 +56,9 @@ export function getRouters(db = null) {
     authRouter = createAuthRouter(activeDb)
     adminRouter = createAdminRouter(activeDb)
     tripRouter = createTripRouter(activeDb)
+    chatsRouter = createChatsRouter(activeDb)
   }
-  return { db: activeDb, authRouter, adminRouter, tripRouter }
+  return { db: activeDb, authRouter, adminRouter, tripRouter, chatsRouter }
 }
 
 export async function parseJsonBody(req, limit = 1024 * 1024) {
@@ -103,8 +106,8 @@ export async function parseJsonBody(req, limit = 1024 * 1024) {
 }
 
 export async function handleApiRequest(req, res, options = {}) {
-  const port = options.port || Number(process.env.PORT || process.env.AGENT_PORT || 5200)
-  const { db, authRouter: authR, adminRouter: adminR, tripRouter: tripR } = getRouters(options.db)
+    const port = options.port || Number(process.env.PORT || process.env.AGENT_PORT || 5200)
+  const { db, authRouter: authR, adminRouter: adminR, tripRouter: tripR, chatsRouter: chatsR } = getRouters(options.db)
 
   try {
     // 0. Ensure database tables exist on hosted Postgres
@@ -178,6 +181,12 @@ export async function handleApiRequest(req, res, options = {}) {
       }
     }
 
+    // Agent status endpoint (public status check)
+    if (pathname === '/api/agent/status' && req.method === 'GET') {
+      handleAgentStatus(req, res)
+      return true
+    }
+
     // 3. Verify CSRF for mutation methods
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const csrf = verifyCsrf(req, port)
@@ -194,6 +203,12 @@ export async function handleApiRequest(req, res, options = {}) {
       body = await parseJsonBody(req)
     }
 
+    // Agent chat SSE streaming endpoint
+    if (pathname === '/api/agent/chat' && req.method === 'POST') {
+      await handleAgentChat(req, res, db, body)
+      return true
+    }
+
     // 5. Route to respective sub-routers
     if (pathname.startsWith('/api/auth')) {
       const handled = await authR(req, res, pathname, body)
@@ -207,6 +222,11 @@ export async function handleApiRequest(req, res, options = {}) {
 
     if (pathname.startsWith('/api/trips')) {
       const handled = await tripR(req, res, pathname, body)
+      if (handled !== null) return true
+    }
+
+    if (pathname.startsWith('/api/chats')) {
+      const handled = await chatsR(req, res, pathname, body)
       if (handled !== null) return true
     }
 
