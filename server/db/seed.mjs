@@ -8,16 +8,21 @@
  *   or: npm run db:seed
  */
 
-import { initDb, closeDb } from './index.mjs'
+import { initDb, closeDb, getDatabaseUrl } from './index.mjs'
 import { runMigrations } from './migrate.mjs'
 import { bootstrapAdmin, bootstrapDemoUser } from '../auth/bootstrap.mjs'
 import { hashPassword } from '../auth/password.mjs'
 
 async function seed() {
-  const isPostgres = !!process.env.DATABASE_URL
-  console.log(`[seed] Connecting to ${isPostgres ? 'PostgreSQL (DATABASE_URL)' : 'SQLite'} database...`)
+  const url = getDatabaseUrl({ preferUnpooled: true })
+  const isPostgres = !!url
+  console.log(`[seed] Connecting to ${isPostgres ? 'PostgreSQL' : 'SQLite'} database...`)
+  if (isPostgres) {
+    const masked = url.replace(/:([^:@]+)@/, ':****@')
+    console.log(`[seed] Connection: ${masked}`)
+  }
 
-  const db = initDb()
+  const db = initDb(url, { preferUnpooled: true })
 
   console.log('[seed] Ensuring schema migrations are up to date...')
   const migrationsApplied = await runMigrations(db)

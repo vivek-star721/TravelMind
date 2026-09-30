@@ -6,14 +6,19 @@
  *   or: npm run db:migrate
  */
 
-import { initDb, closeDb } from './index.mjs'
+import { initDb, closeDb, getDatabaseUrl } from './index.mjs'
 import { runMigrations } from './migrate.mjs'
 
 async function main() {
-  const isPostgres = !!process.env.DATABASE_URL
+  const url = getDatabaseUrl({ preferUnpooled: true })
+  const isPostgres = !!url
   console.log(`[db:migrate] Running database migrations (${isPostgres ? 'PostgreSQL' : 'SQLite'})...`)
+  if (isPostgres) {
+    const masked = url.replace(/:([^:@]+)@/, ':****@')
+    console.log(`[db:migrate] Connection: ${masked}`)
+  }
 
-  const db = initDb()
+  const db = initDb(url, { preferUnpooled: true })
   try {
     const applied = await runMigrations(db)
     console.log(`[db:migrate] Success! ${applied} migration(s) applied.`)

@@ -63,10 +63,43 @@ export function createPgDb(databaseUrl) {
   }
 }
 
-export function initDb(dbPath = ':memory:') {
-  // 1. If DATABASE_URL is provided, connect to hosted Postgres (Neon / Vercel Postgres)
-  if (process.env.DATABASE_URL) {
-    const databaseUrl = process.env.DATABASE_URL
+export function getDatabaseUrl(options = {}) {
+  const preferUnpooled = options.preferUnpooled ?? false
+
+  if (preferUnpooled) {
+    return (
+      process.env.TRAVELMINDS_DATABASE_URL_UNPOOLED ||
+      process.env.TRAVELMINDS_POSTGRES_URL_NON_POOLING ||
+      process.env.DATABASE_URL_UNPOOLED ||
+      process.env.POSTGRES_URL_NON_POOLING ||
+      process.env.TRAVELMINDS_DATABASE_URL ||
+      process.env.TRAVELMINDS_POSTGRES_URL ||
+      process.env.DATABASE_URL ||
+      process.env.POSTGRES_URL
+    )
+  }
+
+  return (
+    process.env.TRAVELMINDS_DATABASE_URL ||
+    process.env.TRAVELMINDS_POSTGRES_URL ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.TRAVELMINDS_DATABASE_URL_UNPOOLED ||
+    process.env.TRAVELMINDS_POSTGRES_URL_NON_POOLING ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.POSTGRES_URL_NON_POOLING
+  )
+}
+
+export function initDb(dbPathOrUrl = null, options = {}) {
+  // 1. If Postgres URL is provided or available via env (TRAVELMINDS_DATABASE_URL or DATABASE_URL)
+  const isExplicitPg =
+    typeof dbPathOrUrl === 'string' &&
+    (dbPathOrUrl.startsWith('postgres://') || dbPathOrUrl.startsWith('postgresql://'))
+
+  const databaseUrl = isExplicitPg ? dbPathOrUrl : getDatabaseUrl(options)
+
+  if (databaseUrl) {
     const identifier = 'postgres:' + databaseUrl
 
     if (dbInstance && currentDbIdentifier === identifier) {
@@ -89,6 +122,7 @@ export function initDb(dbPath = ':memory:') {
   }
 
   // 2. Otherwise fallback to local SQLite (for offline dev & vitest tests)
+  const dbPath = dbPathOrUrl || ':memory:'
   if (dbInstance && currentDbIdentifier === dbPath) {
     return dbInstance
   }
