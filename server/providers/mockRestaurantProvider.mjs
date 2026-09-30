@@ -84,14 +84,18 @@ const WORLD_CITY_COORDS = {
   dubai: { lat: 25.2048, lng: 55.2708 },
   'new york': { lat: 40.7128, lng: -74.0060 },
   bali: { lat: -8.4095, lng: 115.1889 },
+  cairo: { lat: 30.0444, lng: 31.2357 },
 }
 
 function getBaseCoords(loc, args) {
   if (typeof args?.lat === 'number' && typeof args?.lng === 'number') {
     return { lat: args.lat, lng: args.lng }
   }
-  const low = loc.toLowerCase().trim()
+  const low = (loc || '').toLowerCase().trim()
   if (WORLD_CITY_COORDS[low]) return WORLD_CITY_COORDS[low]
+  for (const [k, v] of Object.entries(WORLD_CITY_COORDS)) {
+    if (low.includes(k)) return v
+  }
   return hashLocationToCoords(loc)
 }
 

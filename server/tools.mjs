@@ -246,7 +246,7 @@ export const TOOL_DEFS = [
       checkout: z.string().describe('YYYY-MM-DD'),
       adults: z.number().int().min(1).max(10).optional().describe('default 2'),
       rooms: z.number().int().min(1).max(5).optional().describe('default 1'),
-      currency: z.enum(['INR', 'EUR', 'USD']).optional().describe('valuta del viaggio'),
+      currency: z.string().optional().describe('valuta del viaggio'),
       max_results: z.number().int().min(1).max(10).optional().describe('default 6'),
     },
     handler: searchHotels,

@@ -171,6 +171,18 @@ export function getCurrencySymbol(currencyCode) {
   return map[currencyCode?.toUpperCase()] || currencyCode || '$'
 }
 
+const KNOWN_LANDMARK_COORDS = {
+  'taj mahal agra': { lat: 27.1751, lng: 78.0421, desc: 'Iconic white marble mausoleum on the Yamuna river, UNESCO World Heritage site and universal symbol of love.' },
+  'agra fort': { lat: 27.1795, lng: 78.0211, desc: 'Vast red sandstone fortress of the Mughal emperors with palaces, courtyards, and Yamuna river views.' },
+  'varanasi dashashwamedh ghat': { lat: 25.3076, lng: 83.0104, desc: 'Sacred riverfront on the Ganges famous for its spectacular evening Ganga Aarti ritual and spiritual fervor.' },
+  'sarnath': { lat: 25.3811, lng: 83.0227, desc: 'Revered Buddhist pilgrimage site where Lord Buddha preached his first sermon after attaining enlightenment.' },
+  'mathura krishna janmabhoomi': { lat: 27.5050, lng: 77.6690, desc: 'Sacred birthplace of Lord Krishna with ancient temple complexes and vibrant religious traditions.' },
+  'fatehpur sikri': { lat: 27.0945, lng: 77.6679, desc: 'Fortified 16th-century Mughal capital founded by Emperor Akbar, famed for the Buland Darwaza and Salim Chishti tomb.' },
+  'lucknow bara imambara': { lat: 26.8690, lng: 80.9130, desc: 'Grand Awadhi architectural marvel built in 1784 featuring the famous Bhulbhulaiya labyrinth and Asfi Mosque.' },
+  'allahabad triveni sangam': { lat: 25.4290, lng: 81.8845, desc: 'Sacred confluence of the holy Ganga, Yamuna, and mythical Saraswati rivers in Prayagraj.' },
+  'vrindavan': { lat: 27.5806, lng: 77.7006, desc: 'Historic town of thousands of Radha-Krishna temples including Banke Bihari and Prem Mandir.' },
+}
+
 /**
  * Normalizes an attraction into a structured object with verified/deterministic coordinates,
  * authentic description, area/theme, and estimated budget.
@@ -186,21 +198,36 @@ function resolveAttraction(item, stateCoords, stateName, index, currency = 'INR'
   else if (currency === 'GBP') price = Math.round(basePriceInr / 105) || 2
   else if (currency === 'JPY') price = Math.round((basePriceInr / 80) * 155) || 400
 
-  if (typeof item === 'object' && item !== null) {
+  const landmarkKey = String(typeof item === 'object' && item !== null ? (item.name || '') : item).toLowerCase().trim()
+  const knownLandmark = KNOWN_LANDMARK_COORDS[landmarkKey]
+
+  if (typeof item === 'object' && item !== null && typeof item.lat === 'number' && typeof item.lng === 'number') {
     return {
       name: item.name,
       lat: Number(item.lat.toFixed(4)),
       lng: Number(item.lng.toFixed(4)),
-      desc: item.desc || `Iconic landmark in ${stateName}. Guided exploration, architecture, and photography.`,
+      desc: item.desc || item.description || (knownLandmark?.desc) || `Iconic landmark in ${stateName}. Guided exploration, architecture, and photography.`,
       area: item.area || 'Highlights',
       price,
     }
   }
+
+  if (knownLandmark) {
+    return {
+      name: typeof item === 'object' && item !== null ? item.name : String(item),
+      lat: Number(knownLandmark.lat.toFixed(4)),
+      lng: Number(knownLandmark.lng.toFixed(4)),
+      desc: knownLandmark.desc,
+      area: 'Highlights',
+      price,
+    }
+  }
+
   // Deterministic spread around state coordinates (no Math.random())
   const latOffset = ((index % 5) - 2) * 0.025
   const lngOffset = (((index * 3) % 5) - 2) * 0.025
   return {
-    name: String(item),
+    name: typeof item === 'object' && item !== null ? item.name : String(item),
     lat: Number((stateCoords.lat + latOffset).toFixed(4)),
     lng: Number((stateCoords.lng + lngOffset).toFixed(4)),
     desc: `Historic landmark in ${stateName}. Scenic exploration, cultural heritage, and photography.`,
@@ -329,32 +356,130 @@ export async function runFreeAgent(text, { mode, currency = 'INR', language = 'e
         'Cultural Center & Classical Evening Folk Dance',
       ]
 
-    const areaGroups = groupAttractionsByArea(rawAttractions, coords, destName, cur)
+    // Build pool of unique attractions deduped by name
+    const uniqueAttractions = []
+    const seenAttractionNames = new Set()
+    for (let i = 0; i < rawAttractions.length; i++) {
+      const att = resolveAttraction(rawAttractions[i], coords, destName, i, cur)
+      const key = att.name.toLowerCase().trim()
+      if (!seenAttractionNames.has(key)) {
+        seenAttractionNames.add(key)
+        uniqueAttractions.push(att)
+      }
+    }
+
+    const THEMATIC_TEMPLATES = [
+      { name: 'Royal Heritage Palace & Museum', desc: 'Historic royal residence featuring preserved artifacts, regal courtyards, and architecture.' },
+      { name: 'Ancient Hilltop Fortress & Ramparts', desc: 'Panoramic fortress perched on surrounding hills offering defense history and scenic valley views.' },
+      { name: 'Historic Old Bazaars & Traditional Crafts Market', desc: 'Lively heritage bazaars with local handicrafts, textiles, spices, and artisan workshops.' },
+      { name: 'Scenic Lake Promenade & Sunset Boating', desc: 'Serene freshwater lake surrounded by promenade walks, birdlife, and sunset viewing spots.' },
+      { name: 'Cultural Center & Folk Dance Theatre', desc: 'Celebrated cultural venue showcasing authentic regional folk dances, puppetry, and traditional music.' },
+      { name: 'Botanical Gardens & Royal Pavilions', desc: 'Lush historic landscaped gardens featuring shaded avenues, marble fountains, and pavilions.' },
+      { name: 'Sacred Riverfront Ghats & Evening Aarti', desc: 'Ancient riverfront pilgrimage steps with sacred prayer rituals and morning meditative atmosphere.' },
+      { name: 'Centuries-Old Stepwell & Water Architecture', desc: 'Intricately carved subterranean stepwell showcasing master ancient water engineering and stonework.' },
+      { name: 'Archaeological Museum & Sculpture Gallery', desc: 'Fascinating collection of excavated antiquities, stone inscriptions, and historical relics.' },
+      { name: 'Wildlife Sanctuary & Nature Reserve Trail', desc: 'Protected regional forest habitat home to native flora, migratory birds, and nature trails.' },
+      { name: 'Hillside Temple & Panoramic Overlook', desc: 'Sacred mountain shrine reached by scenic pathway with sweeping views across the countryside.' },
+      { name: 'Spice & Tea Plantation Estate Tour', desc: 'Aromatic hillside plantations offering guided walks, tasting sessions, and verdant vistas.' },
+      { name: 'Artisan Pottery & Terracotta Heritage Village', desc: 'Traditional village where local craftsmen mold handcrafted clay pottery using generational methods.' },
+      { name: 'Panoramic Sunrise Viewpoint & Ridge Walk', desc: 'Elevated viewpoint catching first rays of dawn over mist-veiled valleys and hill ranges.' },
+      { name: 'Historic Clock Tower Square & Heritage Walk', desc: 'Vibrant city center square framed by colonial facades, bustling street cafes, and street life.' },
+    ]
+
+    let templateIdx = 0
+    while (uniqueAttractions.length < daysCount * 3) {
+      const tmpl = THEMATIC_TEMPLATES[templateIdx % THEMATIC_TEMPLATES.length]
+      templateIdx++
+      const cycle = Math.floor(templateIdx / THEMATIC_TEMPLATES.length)
+      const latOffset = ((uniqueAttractions.length % 7) - 3) * 0.035
+      const lngOffset = (((uniqueAttractions.length * 2) % 7) - 3) * 0.035
+      const nameSuffix = cycle > 0 ? ` (${cycle + 1})` : ''
+      const syntheticAtt = {
+        name: `${destName} ${tmpl.name}${nameSuffix}`,
+        lat: Number((coords.lat + latOffset).toFixed(4)),
+        lng: Number((coords.lng + lngOffset).toFixed(4)),
+        desc: tmpl.desc,
+        area: 'Highlights',
+        price: cur === 'INR' ? 250 : (cur === 'USD' ? 4 : (cur === 'EUR' ? 3 : 250)),
+      }
+      const key = syntheticAtt.name.toLowerCase().trim()
+      if (!seenAttractionNames.has(key)) {
+        seenAttractionNames.add(key)
+        uniqueAttractions.push(syntheticAtt)
+      }
+    }
+
+    // Group attractions by area/city
+    const areaGroups = new Map()
+    for (const att of uniqueAttractions) {
+      const area = att.area || 'Highlights'
+      if (!areaGroups.has(area)) areaGroups.set(area, [])
+      areaGroups.get(area).push(att)
+    }
     const areas = Array.from(areaGroups.keys())
+    const usedPlaceNames = new Set()
 
     let totalStopsCount = 0
     let totalEstimatedBudget = 0
     const usedCoords = new Set()
 
-    // Schedule 3-4 stops per day at staggered times: 09:30, 12:30, 15:30, 18:30
+    // Schedule stops per day at staggered times: 09:30, 12:30, 15:30, 18:30
     for (let dayNum = 1; dayNum <= daysCount; dayNum++) {
       if (abortSignal?.aborted) return
 
-      const currentArea = areas[(dayNum - 1) % areas.length]
-      const areaList = areaGroups.get(currentArea) || []
+      // Find an area that still has unvisited attractions
+      let currentArea = areas[(dayNum - 1) % areas.length]
+      let availableInArea = (areaGroups.get(currentArea) || []).filter(
+        (a) => !usedPlaceNames.has(a.name.toLowerCase().trim())
+      )
+
+      if (availableInArea.length === 0) {
+        for (const area of areas) {
+          const rem = (areaGroups.get(area) || []).filter(
+            (a) => !usedPlaceNames.has(a.name.toLowerCase().trim())
+          )
+          if (rem.length > 0) {
+            currentArea = area
+            availableInArea = rem
+            break
+          }
+        }
+      }
+
+      if (availableInArea.length === 0) {
+        availableInArea = uniqueAttractions.filter(
+          (a) => !usedPlaceNames.has(a.name.toLowerCase().trim())
+        )
+      }
+
+      // Pick up to 3 distinct unvisited attractions for this day
+      const dayAttractions = availableInArea.slice(0, 3)
+      if (dayAttractions.length < 3) {
+        const remaining = uniqueAttractions.filter(
+          (a) => !usedPlaceNames.has(a.name.toLowerCase().trim()) && !dayAttractions.some((da) => da.name.toLowerCase().trim() === a.name.toLowerCase().trim())
+        )
+        for (const remAtt of remaining) {
+          if (dayAttractions.length >= 3) break
+          dayAttractions.push(remAtt)
+        }
+      }
+      for (const att of dayAttractions) {
+        usedPlaceNames.add(att.name.toLowerCase().trim())
+      }
+
+      // Determine day's location/city label from its own stops
+      const dayLocation = (dayAttractions[0]?.area && dayAttractions[0].area !== 'Highlights')
+        ? dayAttractions[0].area
+        : (currentArea && currentArea !== 'Highlights' ? currentArea : stateCapital)
 
       // Generate day title matching the area/theme
       let dayTitle
       if (dayNum === 1) {
-        dayTitle = currentArea === 'Panaji'
-          ? `Day 1: Arrival & Exploring Panaji's Colonial Quarter`
-          : currentArea === 'Shimla'
-          ? `Day 1: Arrival & Exploring Shimla's Ridge & Mall Road`
-          : DAY_THEMES[0](dayNum, destName, currentArea || stateCapital)
+        dayTitle = `Day 1: Arrival & Exploring ${dayLocation}'s Historic Highlights`
       } else if (dayNum === daysCount) {
-        dayTitle = DAY_THEMES[DAY_THEMES.length - 1](dayNum, destName, stateCapital)
+        dayTitle = `Day ${dayNum}: Scenic Vistas & Cultural Farewell in ${dayLocation}`
       } else if (currentArea === 'Panaji') {
-        dayTitle = `Day ${dayNum}: Exploring Panaji's Historic Quarter`
+        dayTitle = `Day ${dayNum}: Exploring Panaji's Latin Quarter & Riverside`
       } else if (currentArea === 'Heritage') {
         dayTitle = `Day ${dayNum}: Heritage & Historic Monuments of Old Goa`
       } else if (currentArea === 'Beaches') {
@@ -369,87 +494,103 @@ export async function runFreeAgent(text, { mode, currency = 'INR', language = 'e
         dayTitle = `Day ${dayNum}: High Mountain Glaciers & Scenic Passes`
       } else if (currentArea === 'Culture') {
         dayTitle = `Day ${dayNum}: Cultural Trails, Sacred Springs & Local Bazaars`
-      } else if (currentArea !== 'Highlights') {
-        dayTitle = `Day ${dayNum}: ${currentArea} & Highlights of ${destName}`
       } else {
-        const themeFn = DAY_THEMES[(dayNum - 1) % (DAY_THEMES.length - 1)] || DAY_THEMES[1]
-        dayTitle = themeFn(dayNum, destName, currentArea || stateCapital)
+        dayTitle = `Day ${dayNum}: Highlights & Scenic Sights of ${dayLocation}`
       }
 
-      bridge.broadcast({ type: 'agent_tool', name: 'add_day', args: { title: dayTitle, night: stateCapital } })
+      bridge.broadcast({ type: 'agent_tool', name: 'add_day', args: { title: dayTitle, night: dayLocation } })
       try {
-        await bridge.callBrowser('add_day', { title: dayTitle, night: stateCapital })
+        await bridge.callBrowser('add_day', { title: dayTitle, night: dayLocation })
       } catch (err) {
         console.error('[freeAgent] add_day error:', err)
       }
 
-      // Pick up to 3 distinct attractions from this area (or fallback from all attractions)
-      const primaryAtt = areaList[0] || resolveAttraction(rawAttractions[0], coords, destName, 0)
-      const afternoonAtt = areaList[1] || resolveAttraction(rawAttractions[1 % rawAttractions.length], coords, destName, 1)
-      const eveningAtt = areaList[2] || resolveAttraction(rawAttractions[2 % rawAttractions.length], coords, destName, 2)
-
-      // Ensure distinct coordinates for each stop
-      const morningCoords = { lat: primaryAtt.lat, lng: primaryAtt.lng }
-      // Dining coordinates: distinct location ~400m from morning sight in the dining quarter
+      // Base coordinates for this day from its first attraction
+      const baseCoords = dayAttractions[0] || { lat: coords.lat, lng: coords.lng }
       const lunchCoords = {
-        lat: Number((morningCoords.lat + 0.0035).toFixed(4)),
-        lng: Number((morningCoords.lng - 0.0028).toFixed(4)),
-      }
-      const afternoonCoords = {
-        lat: afternoonAtt.lat !== morningCoords.lat ? afternoonAtt.lat : Number((morningCoords.lat + 0.008).toFixed(4)),
-        lng: afternoonAtt.lng !== morningCoords.lng ? afternoonAtt.lng : Number((morningCoords.lng + 0.008).toFixed(4)),
-      }
-      const eveningCoords = {
-        lat: eveningAtt.lat !== afternoonCoords.lat && eveningAtt.lat !== morningCoords.lat
-          ? eveningAtt.lat
-          : Number((morningCoords.lat - 0.006).toFixed(4)),
-        lng: eveningAtt.lng !== afternoonCoords.lng && eveningAtt.lng !== morningCoords.lng
-          ? eveningAtt.lng
-          : Number((morningCoords.lng + 0.006).toFixed(4)),
+        lat: Number((baseCoords.lat + 0.0035).toFixed(4)),
+        lng: Number((baseCoords.lng - 0.0028).toFixed(4)),
       }
 
-      const dayActivities = [
-        {
-          title: primaryAtt.name,
+      const dayActivities = []
+      // Morning attraction
+      if (dayAttractions[0]) {
+        dayActivities.push({
+          title: dayAttractions[0].name,
           type: 'activity',
           time: '09:30',
           duration_min: 120,
-          lat: morningCoords.lat,
-          lng: morningCoords.lng,
-          price: primaryAtt.price,
-          notes: primaryAtt.desc,
-        },
-        {
-          title: `Authentic ${currentArea !== 'Highlights' ? currentArea : destName} Dining & Local Cuisine`,
-          type: 'food',
-          time: '12:30',
-          duration_min: 75,
-          lat: lunchCoords.lat,
-          lng: lunchCoords.lng,
-          price: cur === 'INR' ? 600 : (cur === 'USD' ? 8 : (cur === 'EUR' ? 7 : (cur === 'GBP' ? 6 : (cur === 'JPY' ? 1200 : 8)))),
-          notes: `Savor traditional ${destName} specialties, authentic thalis, and regional flavors.`,
-        },
-        {
-          title: afternoonAtt.name,
+          lat: dayAttractions[0].lat,
+          lng: dayAttractions[0].lng,
+          price: dayAttractions[0].price,
+          notes: dayAttractions[0].desc,
+        })
+      }
+
+      // Dining stop specific to the day's city/location
+      const diningPrice = cur === 'INR' ? 600 : (cur === 'USD' ? 8 : (cur === 'EUR' ? 7 : (cur === 'GBP' ? 6 : (cur === 'JPY' ? 1200 : 8))))
+      const diningVarieties = [
+        `Authentic ${dayLocation} Dining & Local Cuisine`,
+        `Traditional ${dayLocation} Thali & Regional Flavors`,
+        `Historic ${dayLocation} Culinary Tasting & Heritage Cafe`,
+        `Artisan ${dayLocation} Gastronomy & Street Delights`,
+        `Celebrated ${dayLocation} Specialty Dining & Sweets`,
+        `Scenic ${dayLocation} Evening Bistro & Local Specialties`,
+        `Heritage ${dayLocation} Royal Dining & Local Fare`,
+      ]
+      let diningTitle = diningVarieties[0]
+      for (const candidate of diningVarieties) {
+        if (!usedPlaceNames.has(candidate.toLowerCase().trim())) {
+          diningTitle = candidate
+          break
+        }
+      }
+      if (usedPlaceNames.has(diningTitle.toLowerCase().trim())) {
+        diningTitle = `Authentic ${dayLocation} Dining & Local Flavors (Day ${dayNum})`
+      }
+      usedPlaceNames.add(diningTitle.toLowerCase().trim())
+
+      dayActivities.push({
+        title: diningTitle,
+        type: 'food',
+        time: '12:30',
+        duration_min: 75,
+        lat: lunchCoords.lat,
+        lng: lunchCoords.lng,
+        price: diningPrice,
+        notes: `Savor traditional ${dayLocation} specialties, regional thalis, and authentic flavors.`,
+      })
+
+      // Afternoon attraction
+      if (dayAttractions[1]) {
+        dayActivities.push({
+          title: dayAttractions[1].name,
           type: 'activity',
           time: '15:30',
           duration_min: 105,
-          lat: afternoonCoords.lat,
-          lng: afternoonCoords.lng,
-          price: afternoonAtt.price,
-          notes: afternoonAtt.desc,
-        },
-        {
-          title: eveningAtt.name,
+          lat: dayAttractions[1].lat,
+          lng: dayAttractions[1].lng,
+          price: dayAttractions[1].price,
+          notes: dayAttractions[1].desc,
+        })
+      }
+
+      // Evening attraction
+      if (dayAttractions[2]) {
+        dayActivities.push({
+          title: dayAttractions[2].name,
           type: 'activity',
           time: '18:30',
           duration_min: 90,
-          lat: eveningCoords.lat,
-          lng: eveningCoords.lng,
-          price: eveningAtt.price,
-          notes: eveningAtt.desc,
-        },
-      ]
+          lat: dayAttractions[2].lat,
+          lng: dayAttractions[2].lng,
+          price: dayAttractions[2].price,
+          notes: dayAttractions[2].desc,
+        })
+      }
+
+      // Sort by time
+      dayActivities.sort((a, b) => a.time.localeCompare(b.time))
 
       for (const act of dayActivities) {
         if (abortSignal?.aborted) return

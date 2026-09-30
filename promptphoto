@@ -1,0 +1,35 @@
+TASK: Fix exactly two bugs in my trip planner web app. Do not change anything else.
+
+BUG 1: Trips for destinations outside India don't show up
+- Trips for Indian destinations (e.g. Uttar Pradesh) work correctly.
+- For non-Indian destinations (e.g. Cairo/Egypt, Bali/Indonesia) the planner ends up with 0 days and 0 stops, even though the AI agent's message says the itinerary was created. For Bali the agent showed "Created 8 days" but the itinerary was still empty.
+- Find the root cause. Investigate:
+  1. Any India-specific restriction in geocoding, places, hotel or restaurant search: country codes (countrycodes=in, country:IN, includedRegionCodes, region=in), India bounding boxes/viewbox/locationBias, hardcoded Indian default coordinates, hardcoded lists of Indian cities.
+  2. Whether the destination is geocoded first (getting lat/lng and country code) and those values are passed into all later searches (attractions, restaurants, hotels).
+  3. Currency handling: for non-INR destinations, check that a missing or failed exchange rate can't throw an error and abort the itinerary. Add a safe fallback and try/catch so the itinerary is still saved.
+  4. Whether the create-days/add-stops tool results actually get saved to the store/DB and the UI refreshes afterwards. Tools appeared to run twice (x2) for some steps; make sure days are not duplicated or overwritten (make it idempotent).
+- Fix the cause so any country/city works, while Indian destinations behave exactly as they do now.
+- If a step fails, the agent must not claim success. Build the final "itinerary created" message only from real tool results (days and stops count > 0); otherwise show a clear error.
+
+BUG 2: Place images and locations don't match
+- Example: "Varanasi Dashashwamedh Ghat" shows a photo of the Taj Mahal, and a dining card shows a random street photo. Descriptions are generic template text, and map markers for different cities (Agra, Varanasi) cluster around Lucknow, which suggests fallback coordinates.
+- Find how images and coordinates are assigned to each place and fix it:
+  1. Fetch each image using the specific place name plus city/country (e.g. "Dashashwamedh Ghat Varanasi"), never the region or category alone.
+  2. Attach image, lat and lng to each place object at the moment it is created. Never match images to places by array index.
+  3. Cache images by place name + city (or placeId), not by destination.
+  4. If no confident image is found, use the app's existing placeholder or a neutral fallback instead of an unrelated photo.
+  5. Make sure each place uses its own real coordinates, not a region-center fallback.
+- Do not let the AI model invent image URLs; images must come from a real image source already used in the project (or Wikipedia's REST summary API as a free fallback).
+
+STRICT RULES
+- Do NOT change UI layout, styling, components, routes, auth, admin features, database schema, environment variables, dependencies, or any feature unrelated to the two bugs above.
+- Do NOT refactor, rename, reformat, or "clean up" existing code. Make the smallest possible edits.
+- Do NOT remove or modify existing India behavior; it must keep working exactly as before.
+- Only add a new dependency if absolutely unavoidable, and tell me first.
+
+PROCESS
+1. First, search the codebase and give me a short list of the exact files and lines that cause each bug, with a one-line explanation each. Wait for nothing; proceed after listing.
+2. Apply minimal fixes.
+3. Add temporary console.log statements only where needed to verify, then remove them.
+4. Test with: Cairo (Egypt), Bali (Indonesia), Paris (France), and Uttar Pradesh (India). Confirm for each that days and stops are created, the header counts update, images match the place names, and markers sit in the correct city.
+5. Finish with a summary of every file changed and what changed in it.

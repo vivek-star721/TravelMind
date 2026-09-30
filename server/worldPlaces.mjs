@@ -190,6 +190,7 @@ export function normalizeQuery(rawText) {
 
   // Remove filler phrases
   cleaned = cleaned.replace(FILLER_REGEX, ' ')
+  cleaned = cleaned.replace(/[()[\]{},/\\_–—\-+.!?:;'"~`]/g, ' ')
   cleaned = cleaned.replace(/\s+/g, ' ').trim()
 
   return { cleaned, days }
@@ -335,6 +336,14 @@ export const BUNDLED_CITIES_ATTRACTIONS = {
     { name: 'Sacré-Cœur Basilica', lat: 48.8867, lng: 2.3431, description: 'Romano-Byzantine white stone basilica set atop the highest point in Paris on the historic Montmartre hill.', category: 'heritage' },
     { name: 'Sainte-Chapelle', lat: 48.8554, lng: 2.3450, description: 'Royal Gothic chapel celebrated for its breathtaking 13th-century stained-glass windows rising 15 metres high.', category: 'heritage' },
     { name: 'Tuileries Garden', lat: 48.8634, lng: 2.3275, description: 'Historic public garden designed by André Le Nôtre connecting the Louvre Museum with Place de la Concorde.', category: 'park' },
+    { name: 'Centre Pompidou', lat: 48.8606, lng: 2.3522, description: 'High-tech architectural complex housing Europe’s leading museum of modern art and sprawling public library.', category: 'museum' },
+    { name: 'Luxembourg Gardens & Palace', lat: 48.8462, lng: 2.3372, description: 'Splendid 17th-century Medici gardens with tree-lined promenades, grand octagonal basin, and marble statues.', category: 'park' },
+    { name: 'Panthéon Paris', lat: 48.8462, lng: 2.3449, description: 'Neoclassical monument in the Latin Quarter containing the crypts of Victor Hugo, Voltaire, and Marie Curie.', category: 'heritage' },
+    { name: 'Palais Garnier Opera House', lat: 48.8719, lng: 2.3316, description: 'Opulent 19th-century opera house celebrated for its grand marble staircase and Chagall-painted auditorium ceiling.', category: 'heritage' },
+    { name: 'Place des Vosges & Le Marais', lat: 48.8555, lng: 2.3656, description: 'Oldest planned square in Paris lined with red-brick vaulted arcades, art galleries, and historic aristocratic mansions.', category: 'monument' },
+    { name: 'Musée de l\'Orangerie', lat: 48.8638, lng: 2.3227, description: 'Renowned art gallery in the Tuileries displaying Monet\'s monumental Water Lilies murals in custom oval rooms.', category: 'museum' },
+    { name: 'Pont Alexandre III', lat: 48.8639, lng: 2.3135, description: 'Most ornate bridge in Paris decorated with gilded bronze winged horses, cherubs, and Art Nouveau lamps.', category: 'monument' },
+    { name: 'Montmartre & Place du Tertre', lat: 48.8865, lng: 2.3408, description: 'Historic hilltop bohemian village known for cobblestone lanes, open-air portrait painters, and vibrant bistro terraces.', category: 'viewpoint' },
   ],
   london: [
     { name: 'Big Ben & Palace of Westminster', lat: 51.5007, lng: -0.1246, description: 'Iconic neo-Gothic clock tower and British Houses of Parliament situated along the scenic River Thames.', category: 'monument' },
@@ -645,11 +654,12 @@ const SEARCH_STOP_WORDS = new Set([
  * Filter candidates to ensure searched text appears in name/display_name (whole-word, accent-insensitive).
  */
 export function filterCandidatesMatchingSearch(candidates, searchText) {
-  if (!candidates || candidates.length === 0) return []
+  if (!candidates || candidates.length === 0 || !searchText || typeof searchText !== 'string') return []
   const cleanSearch = searchText
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/[()[\]{},/\\_–—\-+.!?:;'"~`]/g, ' ')
     .trim()
   if (!cleanSearch) return []
 
@@ -836,7 +846,11 @@ export async function fetchWikipediaAttractions(lat, lng, signal = null) {
   const pageMap = extractJson?.query?.pages || {}
 
   const attractions = []
+  const seenTitles = new Set()
   for (const p of candidatePages) {
+    const normTitle = (p.title || '').toLowerCase().trim()
+    if (!normTitle || seenTitles.has(normTitle)) continue
+    seenTitles.add(normTitle)
     const details = pageMap[p.pageid] || {}
     const extract = (details.extract || '').trim()
     if (!extract || extract.length < 20 || NON_TOURIST_REGEX.test(extract)) continue
@@ -1285,12 +1299,26 @@ export async function handleWorldwideInterview({
   let totalEstimatedBudget = 0
   let prevLastStop = null
   const usedCoords = new Set()
+  const usedPlaceNames = new Set()
 
   for (let dayNum = 1; dayNum <= daysCount; dayNum++) {
     if (abortSignal?.aborted) return true
-    const dayCluster = clusters[(dayNum - 1) % clusters.length] || [rawAttractions[0]]
+    const dayCluster = []
+    const dayCandidates = (clusters[dayNum - 1] || []).concat(rawAttractions)
+    const daySeen = new Set()
+    for (const p of dayCandidates) {
+      const key = p.name.toLowerCase().trim()
+      if (!usedPlaceNames.has(key) && !daySeen.has(key)) {
+        daySeen.add(key)
+        usedPlaceNames.add(key)
+        dayCluster.push(p)
+        if (dayCluster.length >= 3) break
+      }
+    }
+
     const orderedStops = optimizeDayRoute(dayCluster, prevLastStop)
-    const dayTitle = deriveDayTheme(dayNum, orderedStops, titleCasedDest)
+    const dayNight = orderedStops[0]?.area || orderedStops[0]?.city || titleCasedDest
+    const dayTitle = deriveDayTheme(dayNum, orderedStops, dayNight)
 
     const times = ['09:30', '12:30', '16:00', '19:00']
     const dayActivities = []
@@ -1315,15 +1343,35 @@ export async function handleWorldwideInterview({
     const foodLat = orderedStops[0] ? Number((orderedStops[0].lat + 0.003).toFixed(4)) : lat
     const foodLng = orderedStops[0] ? Number((orderedStops[0].lng - 0.003).toFixed(4)) : lng
     const foodPrice = Math.round(curInfo.dailyBudget * 0.25)
+    const foodVarieties = [
+      `Local Dining & Culinary Experience in ${dayNight}`,
+      `Traditional ${dayNight} Bistro & Gastronomic Tasting`,
+      `Artisan Cafe & Authentic Bakery Experience in ${dayNight}`,
+      `Historic ${dayNight} Brasserie & Evening Dinner`,
+      `Celebrated Wine Bar & Regional Specialties in ${dayNight}`,
+      `Gourmet Dinner & Local Flavors in ${dayNight}`,
+    ]
+    let foodTitle = foodVarieties[0]
+    for (const candidate of foodVarieties) {
+      if (!usedPlaceNames.has(candidate.toLowerCase().trim())) {
+        foodTitle = candidate
+        break
+      }
+    }
+    if (usedPlaceNames.has(foodTitle.toLowerCase().trim())) {
+      foodTitle = `Local Dining & Culinary Experience in ${dayNight} (Day ${dayNum})`
+    }
+    usedPlaceNames.add(foodTitle.toLowerCase().trim())
+
     dayActivities.push({
-      title: `Local Dining & Culinary Experience in ${titleCasedDest}`,
+      title: foodTitle,
       type: 'food',
       time: foodTime,
       duration_min: 75,
       lat: foodLat,
       lng: foodLng,
       price: foodPrice,
-      notes: `Authentic local restaurants and regional flavors in ${titleCasedDest}.`,
+      notes: `Authentic local restaurants and regional flavors in ${dayNight}.`,
     })
 
     // Sort by time
@@ -1350,9 +1398,9 @@ export async function handleWorldwideInterview({
       act.lng = stopLng
     }
 
-    bridge.broadcast({ type: 'agent_tool', name: 'add_day', args: { title: dayTitle, night: titleCasedDest } })
+    bridge.broadcast({ type: 'agent_tool', name: 'add_day', args: { title: dayTitle, night: dayNight } })
     try {
-      await bridge.callBrowser('add_day', { title: dayTitle, night: titleCasedDest, activities: dayActivities })
+      await bridge.callBrowser('add_day', { title: dayTitle, night: dayNight, activities: dayActivities })
     } catch (err) {
       console.error('[worldPlaces] add_day error:', err)
     }
@@ -1366,7 +1414,7 @@ export async function handleWorldwideInterview({
   bridge.broadcast({
     type: 'agent_tool',
     name: 'search_hotels',
-    args: { location: titleCasedDest, currency: cur },
+    args: { location: titleCasedDest, currency: cur, lat, lng },
   })
   try {
     await bridge.callBrowser('search_hotels', {
@@ -1374,6 +1422,8 @@ export async function handleWorldwideInterview({
       checkin,
       checkout,
       currency: cur,
+      lat,
+      lng,
     })
   } catch {
     /* ignore */
@@ -1382,10 +1432,10 @@ export async function handleWorldwideInterview({
   bridge.broadcast({
     type: 'agent_tool',
     name: 'search_restaurants',
-    args: { location: titleCasedDest },
+    args: { location: titleCasedDest, lat, lng },
   })
   try {
-    await bridge.callBrowser('search_restaurants', { location: titleCasedDest })
+    await bridge.callBrowser('search_restaurants', { location: titleCasedDest, lat, lng })
   } catch {
     /* ignore */
   }
@@ -1393,11 +1443,17 @@ export async function handleWorldwideInterview({
   let finalBudget = totalEstimatedBudget
   let finalCur = cur
   let finalSym = sym
+  let reportedDays = daysCount
+  let reportedStops = totalStopsCount
   try {
     const tripSnap = await bridge.callBrowser('get_trip', {})
     const snapData = tripSnap?.result?.result || tripSnap?.result || tripSnap
     if (snapData?.budget?.total != null) {
       finalBudget = snapData.budget.total
+    }
+    if (Array.isArray(snapData?.days) && snapData.days.length > 0) {
+      reportedDays = snapData.days.length
+      reportedStops = snapData.days.reduce((s, d) => s + (d.items?.length ?? d.item_count ?? 0), 0)
     }
     if (snapData?.currency) {
       finalCur = snapData.currency
@@ -1413,8 +1469,8 @@ export async function handleWorldwideInterview({
   }
 
   const finalReply = isIt
-    ? `Ho completato il tuo itinerario per **${titleCasedDest}** (${daysCount} giorni, ${totalStopsCount} attrazioni e tappe gastronomiche)! Il budget stimato complessivo è di circa **${finalSym}${finalBudget} ${finalCur}**.`
-    : `I've created your ${daysCount}-day personalized itinerary for **${titleCasedDest}** with ${totalStopsCount} curated attractions and dining spots! Estimated total budget is **${finalSym}${finalBudget} ${finalCur}** (~${finalSym}${Math.round(finalBudget / daysCount)}/day).`
+    ? `Ho completato il tuo itinerario per **${titleCasedDest}** (${reportedDays} giorni, ${reportedStops} attrazioni e tappe gastronomiche)! Il budget stimato complessivo è di circa **${finalSym}${finalBudget} ${finalCur}**.`
+    : `I've created your ${reportedDays}-day personalized itinerary for **${titleCasedDest}** with ${reportedStops} curated attractions and dining spots! Estimated total budget is **${finalSym}${finalBudget} ${finalCur}** (~${finalSym}${Math.round(finalBudget / reportedDays)}/day).`
 
   await streamText(bridge, finalReply, abortSignal)
   bridge.broadcast({ type: 'assistant_text', text: finalReply })

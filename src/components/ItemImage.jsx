@@ -91,8 +91,12 @@ function useOnScreen(ref) {
 /* -> [{url, title, manual}] — the user's own gallery first, then Wikipedia
    (unless the item opts out with noWiki) */
 export function useItemImages(item, visible) {
-  const wantWiki = item.lat != null && !item.noWiki
-  const key = wantWiki ? `${item.lat.toFixed(3)},${item.lng.toFixed(3)}` : null
+  const isDining = item.type === 'food' || item.type === 'dining' || item.category === 'dining'
+  const titleClean = (item.title || '').trim()
+  const wantWiki = !item.noWiki && (Boolean(titleClean) || item.lat != null)
+  const key = wantWiki
+    ? (titleClean ? `t:${titleClean.toLowerCase()}` : (item.lat != null ? `${item.lat.toFixed(3)},${item.lng.toFixed(3)}` : null))
+    : null
   const [list, setList] = useState(() => (key ? loadCache()[key] : null) ?? null)
   const refsKey = JSON.stringify(item.imgs ?? [])
   const [manual, setManual] = useState([])
@@ -102,13 +106,42 @@ export function useItemImages(item, visible) {
     const c = loadCache()
     if (c[key] !== undefined) { setList(c[key]); return }
     let dead = false
-    enqueue(() => fetchWikiImages(item.lat, item.lng)).then((imgs) => {
-      c[key] = imgs
+
+    async function load() {
+      // 1. Prioritize specific place title match for accurate photos
+      if (titleClean) {
+        const titleImg = await getTitleImage(titleClean)
+        if (titleImg) {
+          const imgs = [titleImg]
+          c[key] = imgs
+          saveCache()
+          if (!dead) setList(imgs)
+          return
+        }
+      }
+      // 2. Do not show random nearby street photos for dining cards
+      if (isDining) {
+        c[key] = []
+        saveCache()
+        if (!dead) setList([])
+        return
+      }
+      // 3. Fall back to geo-search for attractions if title search yielded nothing
+      if (item.lat != null && item.lng != null) {
+        const imgs = await enqueue(() => fetchWikiImages(item.lat, item.lng))
+        c[key] = imgs
+        saveCache()
+        if (!dead) setList(imgs)
+        return
+      }
+      c[key] = []
       saveCache()
-      if (!dead) setList(imgs)
-    })
+      if (!dead) setList([])
+    }
+
+    load()
     return () => { dead = true }
-  }, [key, visible, item.lat, item.lng])
+  }, [key, visible, titleClean, isDining, item.lat, item.lng])
 
   /* resolve the item's own gallery (idb refs and plain URLs) */
   useEffect(() => {

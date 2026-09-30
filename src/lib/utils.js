@@ -62,10 +62,15 @@ export function toTitleCase(str = '') {
 }
 
 export function fmtMoney(v, currency = 'INR') {
-  const locale = currency === 'INR' ? 'en-IN' : intlLocale()
-  return new Intl.NumberFormat(locale, {
-    style: 'currency', currency, maximumFractionDigits: 0,
-  }).format(Math.round(v))
+  const safeCur = (currency || 'INR').toUpperCase()
+  try {
+    const locale = safeCur === 'INR' ? 'en-IN' : intlLocale()
+    return new Intl.NumberFormat(locale, {
+      style: 'currency', currency: safeCur, maximumFractionDigits: 0,
+    }).format(Math.round(v))
+  } catch {
+    return `${safeCur} ${Math.round(v)}`
+  }
 }
 
 export function fmtKm(v) {
