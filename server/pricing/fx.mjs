@@ -76,8 +76,8 @@ export async function getExchangeRates(db, base = 'USD') {
   // Check SQLite cache if db provided
   if (db) {
     try {
-      const rows = db.prepare('SELECT quote, rate, as_of, source FROM fx_rates WHERE base = ?').all(base)
-      if (rows.length > 0) {
+      const rows = await db.prepare('SELECT quote, rate, as_of, source FROM fx_rates WHERE base = ?').all(base)
+      if (rows && rows.length > 0) {
         const cachedDate = new Date(rows[0].as_of).getTime()
         if (now - cachedDate < FX_CACHE_TTL_MS) {
           const rates = { [base]: 1.0 }
@@ -106,7 +106,7 @@ export async function getExchangeRates(db, base = 'USD') {
         ON CONFLICT(base, quote) DO UPDATE SET rate = excluded.rate, as_of = excluded.as_of, source = excluded.source
       `)
       for (const [quote, rate] of Object.entries(live.rates)) {
-        insert.run(base, quote, rate, live.asOf, live.source)
+        await insert.run(base, quote, rate, live.asOf, live.source)
       }
     } catch {
       // ignore db write errors

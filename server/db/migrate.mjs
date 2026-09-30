@@ -5,8 +5,34 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, 'migrations')
 
-export function runMigrations(db) {
-  // Ensure migrations tracking table exists
+export async function runMigrations(db) {
+  // If hosted Postgres (Neon / Vercel Postgres)
+  if (db.isPostgres) {
+    const schemaPath = join(__dirname, 'schema.postgres.sql')
+    const schemaSql = readFileSync(schemaPath, 'utf8')
+    await db.exec(schemaSql)
+
+    const appliedRows = await db.prepare('SELECT id FROM _migrations').all()
+    const appliedSet = new Set((appliedRows || []).map((r) => r.id))
+
+    const insertMigration = db.prepare(
+      'INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)'
+    )
+
+    let count = 0
+    if (!appliedSet.has('001_initial_schema')) {
+      await insertMigration.run('001_initial_schema', '001_initial_schema.sql', new Date().toISOString())
+      count++
+    }
+    if (!appliedSet.has('002_customer_profile')) {
+      await insertMigration.run('002_customer_profile', '002_customer_profile.sql', new Date().toISOString())
+      count++
+    }
+
+    return count
+  }
+
+  // SQLite execution
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id TEXT PRIMARY KEY,

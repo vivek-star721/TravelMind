@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../agent/authStore'
 import { navigate, Link } from '../../lib/router'
+import { formatErrorMessage } from '../../lib/errorUtils'
 
 const TRAVEL_STYLES = [
   { id: 'balanced', label: 'Balanced' },
@@ -90,6 +91,8 @@ export default function SignupPage() {
 
     if (result.success) {
       navigate('/')
+    } else if (result.error) {
+      setLocalError(formatErrorMessage(result.error))
     }
   }
 
@@ -105,10 +108,13 @@ export default function SignupPage() {
     setIsLoading(false)
     if (result.success) {
       navigate('/')
+    } else if (result.error) {
+      setLocalError(formatErrorMessage(result.error))
     }
   }
 
-  const displayError = localError || authError
+  const rawError = localError || authError
+  const displayError = rawError ? formatErrorMessage(rawError) : ''
 
   return (
     <div className="min-h-full flex flex-col justify-center bg-gradient-to-br from-ink-100 via-brand-50/40 to-ink-50 px-4 py-10 sm:px-6 lg:px-8">

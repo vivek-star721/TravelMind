@@ -1,79 +1,67 @@
 /**
  * Database Seed Script for MyAI-SmarttripPlanner.
- * Populates demo customer accounts, preferences, and sample customer trips.
+ * Populates admin and demo customer accounts, preferences, and sample customer trips.
+ * Supports both PostgreSQL (Neon / Vercel Postgres) via DATABASE_URL and local SQLite.
  *
- * Run with: node server/db/seed.mjs
+ * Usage:
+ *   DATABASE_URL="postgres://..." node server/db/seed.mjs
+ *   or: npm run db:seed
  */
 
-import { join } from 'node:path'
-import { homedir } from 'node:os'
-import { initDb } from './index.mjs'
+import { initDb, closeDb } from './index.mjs'
 import { runMigrations } from './migrate.mjs'
+import { bootstrapAdmin, bootstrapDemoUser } from '../auth/bootstrap.mjs'
 import { hashPassword } from '../auth/password.mjs'
 
-const dataDir = process.env.ULISSE_DATA_DIR || join(homedir(), 'Documents', 'Ulisse')
-const dbPath = process.env.DB_PATH || join(dataDir, 'ulisse.db')
-
-console.log(`[seed] Initializing database at ${dbPath}...`)
-const db = initDb(dbPath)
-const migrationsApplied = runMigrations(db)
-console.log(`[seed] Migrations applied: ${migrationsApplied}`)
-
 async function seed() {
-  const customerId = 'usr-demo-customer'
+  const isPostgres = !!process.env.DATABASE_URL
+  console.log(`[seed] Connecting to ${isPostgres ? 'PostgreSQL (DATABASE_URL)' : 'SQLite'} database...`)
+
+  const db = initDb()
+
+  console.log('[seed] Ensuring schema migrations are up to date...')
+  const migrationsApplied = await runMigrations(db)
+  console.log(`[seed] Migrations applied: ${migrationsApplied}`)
+
+  // 1. Bootstrap Admin user
+  console.log('[seed] Bootstrapping administrator account...')
+  const adminResult = await bootstrapAdmin(db)
+
+  // 2. Bootstrap Demo Traveler user
+  console.log('[seed] Bootstrapping demo traveler account...')
+  await bootstrapDemoUser(db)
+
   const customerEmail = 'traveler@example.com'
-  const customerPassword = 'Traveler123!'
+  const customerPassword = process.env.DEMO_USER_PASSWORD || 'Traveler123!'
   const passwordHash = await hashPassword(customerPassword)
   const now = new Date().toISOString()
 
-  const existingCustomer = db.prepare('SELECT id FROM users WHERE email = ?').get(customerEmail)
-  if (existingCustomer) {
-    console.log(`[seed] Demo user ${customerEmail} already exists. Updating credentials...`)
-    db.prepare(`
-      UPDATE users
-      SET display_name = ?,
-          password_hash = ?,
-          phone = ?,
-          home_city = ?,
-          travel_style = ?,
-          budget_pref = ?,
-          preferences_json = ?,
-          is_active = 1
-      WHERE id = ?
-    `).run(
-      'Aarav Sharma',
-      passwordHash,
-      '+91 98765 43210',
-      'Mumbai',
-      'adventure',
-      'medium',
-      JSON.stringify({ foodPreference: 'vegetarian', preferredCurrency: 'INR', pace: 'moderate' }),
-      existingCustomer.id
-    )
-  } else {
-    console.log(`[seed] Creating demo customer: ${customerEmail}`)
-    db.prepare(`
-      INSERT INTO users (
-        id, email, display_name, password_hash, role,
-        home_currency, locale, is_active, phone, home_city,
-        travel_style, budget_pref, preferences_json, created_at
-      ) VALUES (?, ?, ?, ?, 'user', 'INR', 'en-IN', 1, ?, ?, ?, ?, ?, ?)
-    `).run(
-      customerId,
-      customerEmail,
-      'Aarav Sharma',
-      passwordHash,
-      '+91 98765 43210',
-      'Mumbai',
-      'adventure',
-      'medium',
-      JSON.stringify({ foodPreference: 'vegetarian', preferredCurrency: 'INR', pace: 'moderate' }),
-      now
-    )
-  }
+  const existingCustomer = await db.prepare('SELECT id FROM users WHERE email = ?').get(customerEmail)
+  const targetUserId = existingCustomer ? existingCustomer.id : 'usr-demo-traveler'
 
-  // Seed sample trips linked to customer
-  const targetUserId = existingCustomer ? existingCustomer.id : customerId
+  await db.prepare(`
+    UPDATE users
+    SET display_name = ?,
+        password_hash = ?,
+        phone = ?,
+        home_city = ?,
+        travel_style = ?,
+        budget_pref = ?,
+        preferences_json = ?,
+        is_active = 1
+    WHERE id = ?
+  `).run(
+    'Aarav Sharma',
+    passwordHash,
+    '+91 98765 43210',
+    'Mumbai',
+    'adventure',
+    'medium',
+    JSON.stringify({ foodPreference: 'vegetarian', preferredCurrency: 'INR', pace: 'moderate' }),
+    targetUserId
+  )
+
+  // 3. Seed sample trips linked to customer
   const trip1Id = 'trip-himachal-demo'
   const trip2Id = 'trip-goa-demo'
 
@@ -139,29 +127,42 @@ async function seed() {
     suggestions: []
   }
 
-  const upsertTrip = (trip) => {
-    const existing = db.prepare('SELECT id FROM trips WHERE id = ?').get(trip.id)
+  const upsertTrip = async (trip) => {
+    const existing = await db.prepare('SELECT id FROM trips WHERE id = ?').get(trip.id)
     if (existing) {
-      db.prepare('UPDATE trips SET user_id = ?, title = ?, data_json = ?, updated_at = ? WHERE id = ?')
+      await db.prepare('UPDATE trips SET user_id = ?, title = ?, data_json = ?, updated_at = ? WHERE id = ?')
         .run(targetUserId, trip.title, JSON.stringify(trip), now, trip.id)
     } else {
-      db.prepare('INSERT INTO trips (id, user_id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      await db.prepare('INSERT INTO trips (id, user_id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(trip.id, targetUserId, trip.title, JSON.stringify(trip), now, now)
     }
   }
 
-  upsertTrip(sampleTrip1)
-  upsertTrip(sampleTrip2)
+  await upsertTrip(sampleTrip1)
+  await upsertTrip(sampleTrip2)
 
-  console.log('============================================================')
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@mytripplanner.local'
+  const adminPassword = process.env.ADMIN_PASSWORD || 'AdminPass2026!'
+
+  console.log('\n============================================================')
   console.log('[seed] Database seeded successfully!')
-  console.log('Customer Email:    ' + customerEmail)
-  console.log('Customer Password: ' + customerPassword)
-  console.log('Sample Trips:      2 trips linked to ' + customerEmail)
-  console.log('============================================================')
+  console.log('------------------------------------------------------------')
+  console.log('Demo Traveler Account:')
+  console.log(`  Email:    ${customerEmail}`)
+  console.log(`  Password: ${customerPassword}`)
+  console.log('  Trips:    2 sample trips populated')
+  console.log('------------------------------------------------------------')
+  console.log('Administrator Account:')
+  console.log(`  Email:    ${adminEmail}`)
+  console.log(`  Password: ${adminPassword}`)
+  console.log('============================================================\n')
 }
 
-seed().catch((err) => {
-  console.error('[seed] Error seeding database:', err)
-  process.exit(1)
-})
+seed()
+  .catch((err) => {
+    console.error('[seed] Error seeding database:', err)
+    process.exitCode = 1
+  })
+  .finally(async () => {
+    await closeDb()
+  })

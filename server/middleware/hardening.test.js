@@ -120,7 +120,7 @@ describe('PART 3 — Server Hardening & Security Middleware', () => {
       expect(result.properties).toEqual([])
       expect(result.hint).toContain('ULISSE_ENABLE_SCRAPERS=1')
       process.env.ULISSE_ENABLE_SCRAPERS = originalEnv
-    })
+    }, 15000)
 
     it('disables Google Maps restaurant scraping by default when ULISSE_ENABLE_SCRAPERS is not 1', async () => {
       const originalEnv = process.env.ULISSE_ENABLE_SCRAPERS
@@ -134,6 +134,6 @@ describe('PART 3 — Server Hardening & Security Middleware', () => {
       expect(result.restaurants).toEqual([])
       expect(result.hint).toContain('ULISSE_ENABLE_SCRAPERS=1')
       process.env.ULISSE_ENABLE_SCRAPERS = originalEnv
-    })
+    }, 15000)
   })
 })

@@ -17,6 +17,10 @@ export function getAllowedOrigins(port = 5200) {
     'http://127.0.0.1:5300',
   ])
 
+  if (process.env.VERCEL_URL) {
+    allowed.add(`https://${process.env.VERCEL_URL}`)
+  }
+
   if (process.env.ALLOWED_ORIGINS) {
     process.env.ALLOWED_ORIGINS.split(',')
       .map((s) => s.trim())
@@ -27,10 +31,25 @@ export function getAllowedOrigins(port = 5200) {
   return allowed
 }
 
-export function isOriginAllowed(origin, port = 5200) {
+export function isOriginAllowed(origin, port = 5200, req = null) {
   if (!origin) return false
   const allowed = getAllowedOrigins(port)
-  return allowed.has(origin)
+  if (allowed.has(origin)) return true
+
+  // Allow same-origin matching host or x-forwarded-host
+  if (req?.headers) {
+    const host = req.headers['x-forwarded-host'] || req.headers.host
+    if (host && (origin === `https://${host}` || origin === `http://${host}`)) {
+      return true
+    }
+  }
+
+  // Allow any official Vercel preview or production deployment (*.vercel.app)
+  if (/^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/i.test(origin)) {
+    return true
+  }
+
+  return false
 }
 
 export function verifyCsrf(req, port = 5200) {
@@ -48,7 +67,7 @@ export function verifyCsrf(req, port = 5200) {
 
   // 2. Verify Origin header if present
   const origin = req.headers['origin']
-  if (origin && !isOriginAllowed(origin, port)) {
+  if (origin && !isOriginAllowed(origin, port, req)) {
     return { ok: false, status: 403, error: 'Origin not allowed' }
   }
 

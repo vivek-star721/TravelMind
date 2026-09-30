@@ -20,7 +20,7 @@ export function createAdminRouter(db) {
 
     const cookies = parseCookies(req.headers.cookie)
     const token = cookies.sid
-    const session = getSession(db, token)
+    const session = await getSession(db, token)
 
     if (!session || session.role !== 'admin') {
       return sendJson(res, 403, { error: 'Administrator access required' })
@@ -28,10 +28,15 @@ export function createAdminRouter(db) {
 
     // GET /api/admin/overview
     if (req.method === 'GET' && pathname === '/api/admin/overview') {
-      const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
-      const tripCount = db.prepare('SELECT COUNT(*) AS count FROM trips').get().count
-      const activeSessions = db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?').get(new Date().toISOString()).count
-      const cacheEntries = db.prepare('SELECT COUNT(*) AS count FROM places_cache').get().count
+      const userRow = await db.prepare('SELECT COUNT(*) AS count FROM users').get()
+      const tripRow = await db.prepare('SELECT COUNT(*) AS count FROM trips').get()
+      const sessionRow = await db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?').get(new Date().toISOString())
+      const cacheRow = await db.prepare('SELECT COUNT(*) AS count FROM places_cache').get()
+
+      const userCount = Number(userRow?.count || 0)
+      const tripCount = Number(tripRow?.count || 0)
+      const activeSessions = Number(sessionRow?.count || 0)
+      const cacheEntries = Number(cacheRow?.count || 0)
 
       return sendJson(res, 200, {
         stats: {
@@ -54,7 +59,7 @@ export function createAdminRouter(db) {
 
     // GET /api/admin/users
     if (req.method === 'GET' && pathname === '/api/admin/users') {
-      const users = db.prepare(`
+      const users = await db.prepare(`
         SELECT id, email, display_name, role, home_currency, locale, is_active, failed_logins, locked_until, created_at
         FROM users
         ORDER BY created_at DESC
@@ -71,7 +76,7 @@ export function createAdminRouter(db) {
       }
 
       const { isActive } = body || {}
-      db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(isActive ? 1 : 0, targetUserId)
+      await db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(isActive ? 1 : 0, targetUserId)
       return sendJson(res, 200, { success: true })
     }
 
@@ -82,7 +87,7 @@ export function createAdminRouter(db) {
       const tempPassword = crypto.randomBytes(8).toString('hex') + '!Aa1'
       const hashed = await hashPassword(tempPassword)
 
-      db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 1 WHERE id = ?').run(
+      await db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 1 WHERE id = ?').run(
         hashed,
         targetUserId
       )
@@ -98,21 +103,22 @@ export function createAdminRouter(db) {
         return sendJson(res, 400, { error: 'You cannot delete your own admin account' })
       }
 
-      const target = db.prepare('SELECT role FROM users WHERE id = ?').get(targetUserId)
+      const target = await db.prepare('SELECT role FROM users WHERE id = ?').get(targetUserId)
       if (target?.role === 'admin') {
-        const adminCount = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get().count
+        const adminRow = await db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get()
+        const adminCount = Number(adminRow?.count || 0)
         if (adminCount <= 1) {
           return sendJson(res, 400, { error: 'Cannot delete the last remaining administrator account' })
         }
       }
 
-      db.prepare('DELETE FROM users WHERE id = ?').run(targetUserId)
+      await db.prepare('DELETE FROM users WHERE id = ?').run(targetUserId)
       return sendJson(res, 200, { success: true })
     }
 
     // GET /api/admin/trips (Privacy-safe metadata only)
     if (req.method === 'GET' && pathname === '/api/admin/trips') {
-      const trips = db.prepare(`
+      const trips = await db.prepare(`
         SELECT t.id, t.title, t.created_at, t.updated_at, u.email AS owner_email,
                LENGTH(t.data_json) AS size_bytes
         FROM trips t
@@ -124,7 +130,7 @@ export function createAdminRouter(db) {
 
     // GET /api/admin/settings (Masked API keys)
     if (req.method === 'GET' && pathname === '/api/admin/settings') {
-      const rows = db.prepare('SELECT key, value_encrypted, updated_at FROM settings').all()
+      const rows = await db.prepare('SELECT key, value_encrypted, updated_at FROM settings').all()
       const settings = {}
       for (const row of rows) {
         try {
@@ -150,7 +156,7 @@ export function createAdminRouter(db) {
 
       const encrypted = encryptData(value)
       const now = new Date().toISOString()
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO settings (key, value_encrypted, updated_by, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET value_encrypted = excluded.value_encrypted,
@@ -163,7 +169,7 @@ export function createAdminRouter(db) {
 
     // GET /api/admin/audit
     if (req.method === 'GET' && pathname === '/api/admin/audit') {
-      const logs = db.prepare(`
+      const logs = await db.prepare(`
         SELECT id, actor_user_id, action, target, meta_json, ip, created_at
         FROM audit_log
         ORDER BY created_at DESC

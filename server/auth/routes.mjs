@@ -52,7 +52,7 @@ export function createAuthRouter(db) {
   return async function handleAuthRoute(req, res, pathname, body) {
     const cookies = parseCookies(req.headers.cookie)
     const token = cookies.sid
-    const session = getSession(db, token)
+    const session = await getSession(db, token)
     const clientIp = req.socket?.remoteAddress || '127.0.0.1'
     const userAgent = req.headers['user-agent'] || ''
 
@@ -96,7 +96,7 @@ export function createAuthRouter(db) {
       }
 
       const normalizedEmail = email.trim().toLowerCase()
-      const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail)
+      const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail)
       if (existing) {
         return sendJson(res, 409, { error: 'An account with this email already exists' })
       }
@@ -106,7 +106,7 @@ export function createAuthRouter(db) {
       const now = new Date().toISOString()
       const prefJson = preferences ? JSON.stringify(preferences) : null
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO users (
           id, email, display_name, password_hash, role, home_currency, locale,
           is_active, phone, home_city, travel_style, budget_pref, preferences_json, created_at
@@ -127,10 +127,10 @@ export function createAuthRouter(db) {
       )
 
       const newUser = { id: userId, role: 'user' }
-      const { token: sessionToken, ttlMs } = createSession(db, newUser, clientIp, userAgent)
+      const { token: sessionToken, ttlMs } = await createSession(db, newUser, clientIp, userAgent)
       const cookieHeader = serializeSessionCookie(sessionToken, 'user', false, ttlMs)
 
-      const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
+      const createdUser = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
 
       return sendJson(
         res,
@@ -151,7 +151,7 @@ export function createAuthRouter(db) {
       }
 
       const normalizedEmail = email.trim().toLowerCase()
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail)
+      const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail)
 
       if (!user) {
         return sendJson(res, 401, { error: 'Invalid email or password' })
@@ -164,7 +164,7 @@ export function createAuthRouter(db) {
 
       const valid = await verifyPassword(password, user.password_hash)
       if (!valid) {
-        recordFailedLogin(db, user)
+        await recordFailedLogin(db, user)
         return sendJson(res, 401, { error: 'Invalid email or password' })
       }
 
@@ -172,15 +172,15 @@ export function createAuthRouter(db) {
         return sendJson(res, 403, { error: 'Account has been disabled' })
       }
 
-      resetFailedLogins(db, user.id)
+      await resetFailedLogins(db, user.id)
 
       if (token) {
-        destroySession(db, token)
+        await destroySession(db, token)
       }
 
       // 30 days for rememberMe, 24 hours otherwise
       const sessionTtlMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000
-      const { token: sessionToken, ttlMs } = createSession(db, user, clientIp, userAgent, sessionTtlMs)
+      const { token: sessionToken, ttlMs } = await createSession(db, user, clientIp, userAgent, sessionTtlMs)
       const cookieHeader = serializeSessionCookie(sessionToken, user.role, false, ttlMs)
 
       return sendJson(
@@ -200,25 +200,25 @@ export function createAuthRouter(db) {
       const targetEmail = (email || 'google.traveler@example.com').trim().toLowerCase()
       const targetName = (name || 'Google Traveler').trim()
 
-      let user = db.prepare('SELECT * FROM users WHERE email = ?').get(targetEmail)
+      let user = await db.prepare('SELECT * FROM users WHERE email = ?').get(targetEmail)
       if (!user) {
         const userId = 'usr-g-' + crypto.randomUUID().slice(0, 8)
         const dummyPw = await hashPassword(crypto.randomUUID())
         const now = new Date().toISOString()
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO users (
             id, email, display_name, password_hash, role, home_currency, locale,
             is_active, avatar_url, created_at
           ) VALUES (?, ?, ?, ?, 'user', 'INR', 'en-IN', 1, ?, ?)
         `).run(userId, targetEmail, targetName, dummyPw, avatarUrl || null, now)
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
+        user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
       }
 
       if (token) {
-        destroySession(db, token)
+        await destroySession(db, token)
       }
 
-      const { token: sessionToken, ttlMs } = createSession(db, user, clientIp, userAgent, 30 * 24 * 60 * 60 * 1000)
+      const { token: sessionToken, ttlMs } = await createSession(db, user, clientIp, userAgent, 30 * 24 * 60 * 60 * 1000)
       const cookieHeader = serializeSessionCookie(sessionToken, user.role, false, ttlMs)
 
       return sendJson(
@@ -249,7 +249,7 @@ export function createAuthRouter(db) {
       if (!session) {
         return sendJson(res, 401, { error: 'Authentication required' })
       }
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
+      const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
       if (!user) {
         return sendJson(res, 404, { error: 'User not found' })
       }
@@ -275,7 +275,7 @@ export function createAuthRouter(db) {
         preferences,
       } = body || {}
 
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
+      const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
       if (!user) {
         return sendJson(res, 404, { error: 'User not found' })
       }
@@ -288,7 +288,7 @@ export function createAuthRouter(db) {
       const newAvatar = avatarUrl !== undefined ? avatarUrl : user.avatar_url
       const newPrefs = preferences !== undefined ? JSON.stringify(preferences) : user.preferences_json
 
-      db.prepare(`
+      await db.prepare(`
         UPDATE users
         SET display_name = ?,
             phone = ?,
@@ -300,7 +300,7 @@ export function createAuthRouter(db) {
         WHERE id = ?
       `).run(newName, newPhone, newCity, newStyle, newBudget, newAvatar, newPrefs, session.user_id)
 
-      const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
+      const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
 
       return sendJson(res, 200, {
         success: true,
@@ -316,10 +316,10 @@ export function createAuthRouter(db) {
       }
 
       const normalizedEmail = email.trim().toLowerCase()
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail)
+      const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail)
 
       if (!user || user.role !== 'admin') {
-        if (user) recordFailedLogin(db, user)
+        if (user) await recordFailedLogin(db, user)
         return sendJson(res, 401, { error: 'Invalid administrator credentials' })
       }
 
@@ -330,7 +330,7 @@ export function createAuthRouter(db) {
 
       const valid = await verifyPassword(password, user.password_hash)
       if (!valid) {
-        recordFailedLogin(db, user)
+        await recordFailedLogin(db, user)
         return sendJson(res, 401, { error: 'Invalid administrator credentials' })
       }
 
@@ -338,13 +338,13 @@ export function createAuthRouter(db) {
         return sendJson(res, 403, { error: 'Admin account has been disabled' })
       }
 
-      resetFailedLogins(db, user.id)
+      await resetFailedLogins(db, user.id)
 
       if (token) {
-        destroySession(db, token)
+        await destroySession(db, token)
       }
 
-      const { token: sessionToken } = createSession(db, user, clientIp, userAgent)
+      const { token: sessionToken } = await createSession(db, user, clientIp, userAgent)
       const cookieHeader = serializeSessionCookie(sessionToken, 'admin')
 
       return sendJson(
@@ -361,7 +361,7 @@ export function createAuthRouter(db) {
     // POST /api/auth/logout
     if (req.method === 'POST' && pathname === '/api/auth/logout') {
       if (token) {
-        destroySession(db, token)
+        await destroySession(db, token)
       }
       return sendJson(res, 200, { success: true }, { 'Set-Cookie': serializeClearSessionCookie() })
     }
@@ -377,7 +377,7 @@ export function createAuthRouter(db) {
         return sendJson(res, 400, { error: 'Current password and new password are required' })
       }
 
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
+      const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id)
       const valid = await verifyPassword(currentPassword, user.password_hash)
       if (!valid) {
         return sendJson(res, 400, { error: 'Current password is incorrect' })
@@ -389,13 +389,13 @@ export function createAuthRouter(db) {
       }
 
       const newHash = await hashPassword(newPassword)
-      db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 0 WHERE id = ?').run(
+      await db.prepare('UPDATE users SET password_hash = ?, must_change_pw = 0 WHERE id = ?').run(
         newHash,
         session.user_id
       )
 
-      destroySession(db, token)
-      const { token: newToken } = createSession(db, user, clientIp, userAgent)
+      await destroySession(db, token)
+      const { token: newToken } = await createSession(db, user, clientIp, userAgent)
       const cookieHeader = serializeSessionCookie(newToken, user.role)
 
       return sendJson(res, 200, { success: true, message: 'Password updated successfully' }, { 'Set-Cookie': cookieHeader })
@@ -404,4 +404,3 @@ export function createAuthRouter(db) {
     return null
   }
 }
-

@@ -12,18 +12,12 @@ import { createAgent, CODEX_BIN } from './agent.mjs'
 import { createAuth } from './auth.mjs'
 import { createMcpHandler } from './mcp-http.mjs'
 import { createStorage, documentsDir } from './storage.mjs'
-import { handleWorldPlacesHttp } from './worldPlaces.mjs'
 import { initDb } from './db/index.mjs'
 import { bootstrapAdmin, bootstrapDemoUser } from './auth/bootstrap.mjs'
 import { migrateFileTripsToDb } from './db/migrate-files.mjs'
-import { verifyCsrf, isOriginAllowed } from './auth/csrf.mjs'
 import { parseCookies, getSession } from './auth/session.mjs'
-import { createAuthRouter } from './auth/routes.mjs'
-import { createAdminRouter } from './admin/routes.mjs'
-import { createTripRouter } from './trips/routes.mjs'
-import { applySecurityHeaders } from './middleware/headers.mjs'
-import { authRateLimiter, placesRateLimiter } from './middleware/rateLimit.mjs'
-import { attachRequestId, handleServerError } from './middleware/errorHandler.mjs'
+import { handleApiRequest } from './app.mjs'
+import { handleServerError } from './middleware/errorHandler.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || process.env.AGENT_PORT || 5200)
@@ -45,10 +39,6 @@ const db = initDb(join(dataDir, 'ulisse.db'))
 await bootstrapAdmin(db)
 await bootstrapDemoUser(db)
 migrateFileTripsToDb(db, dataDir)
-
-const authRouter = createAuthRouter(db)
-const adminRouter = createAdminRouter(db)
-const tripRouter = createTripRouter(db)
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -131,106 +121,13 @@ const storage = createStorage({ broadcast: (o) => bridge?.broadcast(o) })
 
 const http = createServer(async (req, res) => {
   try {
-    // 0. CORS & Preflight (OPTIONS)
-    const origin = req.headers['origin']
-    if (origin && isOriginAllowed(origin, PORT)) {
-      res.setHeader('Access-Control-Allow-Origin', origin)
-      res.setHeader('Access-Control-Allow-Credentials', 'true')
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With, Authorization, Accept')
-      res.setHeader('Access-Control-Max-Age', '86400')
-      res.setHeader('Vary', 'Origin')
-    }
-
-    if (req.method === 'OPTIONS') {
-      if (origin && !isOriginAllowed(origin, PORT)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ error: 'Origin not allowed' }))
-        return
-      }
-      res.writeHead(204)
-      res.end()
-      return
-    }
-
-    // 1. Attach unique Request ID & Apply Security Headers
-    attachRequestId(req, res)
-    applySecurityHeaders(res)
-
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     const pathname = parsedUrl.pathname
-    const clientIp = req.socket?.remoteAddress || '127.0.0.1'
 
-    // 2. Rate limiting for sensitive endpoint namespaces
-    if (pathname.startsWith('/api/auth/')) {
-      const authLimit = authRateLimiter.consume(clientIp)
-      if (!authLimit.allowed) {
-        res.writeHead(429, {
-          'Content-Type': 'application/json',
-          'Retry-After': String(authLimit.retryAfterSeconds),
-        })
-        res.end(JSON.stringify({ error: 'Too many requests. Please try again later.' }))
-        return
-      }
-    }
-
-    if (pathname.startsWith('/api/places/')) {
-      const placesLimit = placesRateLimiter.consume(clientIp)
-      if (!placesLimit.allowed) {
-        res.writeHead(429, {
-          'Content-Type': 'application/json',
-          'Retry-After': String(placesLimit.retryAfterSeconds),
-        })
-        res.end(JSON.stringify({ error: 'Too many requests. Upstream rate limit respected.' }))
-        return
-      }
-    }
-
-    // 3. Verify CSRF for mutation methods
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && pathname.startsWith('/api/')) {
-      const csrf = verifyCsrf(req, PORT)
-      if (!csrf.ok) {
-        res.writeHead(csrf.status, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: csrf.error }))
-        return
-      }
-    }
-
-    // 4. Body parsing with 1 MB limit for API calls
-    let body = null
-    if (['POST', 'PUT', 'PATCH'].includes(req.method) && (pathname.startsWith('/api/') || pathname === '/debug/tool')) {
-      body = await parseJsonBody(req)
-    }
-
-    // 5. API Routers
-    if (pathname.startsWith('/api/auth')) {
-      const handled = await authRouter(req, res, pathname, body)
-      if (handled !== null) return
-    }
-
-    if (pathname.startsWith('/api/admin')) {
-      const handled = await adminRouter(req, res, pathname, body)
-      if (handled !== null) return
-    }
-
-    if (pathname.startsWith('/api/trips')) {
-      const handled = await tripRouter(req, res, pathname, body)
-      if (handled !== null) return
-    }
-
-    // Legacy storage endpoints & world places HTTP
-    if (await storage.handle(req, res)) return
-    if (await handleWorldPlacesHttp(req, res)) return
-
-    if (pathname === '/mcp') {
-      mcpHandler?.(req, res)
-      return
-    }
-
-    if (pathname === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, tabs: bridge?.tabCount ?? 0 }))
-      return
+    // 1. Process API and Health routes via shared API handler
+    if (pathname.startsWith('/api/') || pathname === '/health') {
+      const handled = await handleApiRequest(req, res, { db, port: PORT })
+      if (handled) return
     }
 
     /* Debug hook: disabled in production; in development, requires admin session */

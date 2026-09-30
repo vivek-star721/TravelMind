@@ -3,6 +3,8 @@ import { useTrip } from '../store'
 import { normalizeTrip } from '../lib/utils'
 import { api } from '../lib/api'
 
+import { formatErrorMessage } from '../lib/errorUtils'
+
 export const useAuth = create((set, get) => ({
   user: null,
   loading: true,
@@ -36,7 +38,7 @@ export const useAuth = create((set, get) => ({
     try {
       const data = await api.auth.login(email, password, rememberMe)
       if (!data?.success && !data?.user) {
-        const msg = data?.error || 'Login failed. Please check your credentials.'
+        const msg = formatErrorMessage(data, 'Login failed. Please check your credentials.')
         set({ error: msg, loading: false })
         return { success: false, error: msg }
       }
@@ -45,7 +47,7 @@ export const useAuth = create((set, get) => ({
       await get().loadUserTrips()
       return { success: true, user: data.user }
     } catch (err) {
-      const msg = err.message || 'Unable to connect to the authentication server'
+      const msg = formatErrorMessage(err, 'Unable to connect to the authentication server')
       set({ error: msg, loading: false })
       return { success: false, error: msg }
     }
@@ -56,7 +58,7 @@ export const useAuth = create((set, get) => ({
     try {
       const data = await api.auth.signup(formData)
       if (!data?.success && !data?.user) {
-        const msg = data?.error || 'Signup failed. Please check the details entered.'
+        const msg = formatErrorMessage(data, 'Signup failed. Please check the details entered.')
         set({ error: msg, loading: false })
         return { success: false, error: msg }
       }
@@ -65,7 +67,7 @@ export const useAuth = create((set, get) => ({
       await get().loadUserTrips()
       return { success: true, user: data.user }
     } catch (err) {
-      const msg = err.message || 'Network error during signup'
+      const msg = formatErrorMessage(err, 'Network error during signup')
       set({ error: msg, loading: false })
       return { success: false, error: msg }
     }
@@ -76,7 +78,7 @@ export const useAuth = create((set, get) => ({
     try {
       const data = await api.auth.google(googleData)
       if (!data?.success && !data?.user) {
-        const msg = data?.error || 'Google authentication failed'
+        const msg = formatErrorMessage(data, 'Google authentication failed')
         set({ error: msg, loading: false })
         return { success: false, error: msg }
       }
@@ -85,7 +87,7 @@ export const useAuth = create((set, get) => ({
       await get().loadUserTrips()
       return { success: true, user: data.user }
     } catch (err) {
-      const msg = err.message || 'Network error during Google login'
+      const msg = formatErrorMessage(err, 'Network error during Google login')
       set({ error: msg, loading: false })
       return { success: false, error: msg }
     }
@@ -110,7 +112,7 @@ export const useAuth = create((set, get) => ({
       set({ user: data.user, loading: false, error: null })
       return { success: true, user: data.user }
     } catch (err) {
-      const msg = err.message || 'Network error while updating profile'
+      const msg = formatErrorMessage(err, 'Network error while updating profile')
       set({ error: msg, loading: false })
       return { success: false, error: msg }
     }
@@ -121,7 +123,7 @@ export const useAuth = create((set, get) => ({
       const data = await api.auth.changePassword(currentPassword, newPassword)
       return { success: true, message: data.message || 'Password updated successfully' }
     } catch (err) {
-      return { success: false, error: err.message || 'Network error updating password' }
+      return { success: false, error: formatErrorMessage(err, 'Network error updating password') }
     }
   },
 

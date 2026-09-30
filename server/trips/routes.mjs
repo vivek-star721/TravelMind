@@ -18,7 +18,7 @@ export function createTripRouter(db) {
 
     const cookies = parseCookies(req.headers.cookie)
     const token = cookies.sid
-    const session = getSession(db, token)
+    const session = await getSession(db, token)
 
     if (!session || !session.user_id) {
       return sendJson(res, 401, { error: 'Authentication required' })
@@ -28,14 +28,14 @@ export function createTripRouter(db) {
 
     // GET /api/trips (List own trips)
     if (req.method === 'GET' && pathname === '/api/trips') {
-      const rows = db.prepare(`
+      const rows = await db.prepare(`
         SELECT id, title, data_json, created_at, updated_at
         FROM trips
         WHERE user_id = ?
         ORDER BY updated_at DESC
       `).all(userId)
 
-      const trips = rows.map((r) => {
+      const trips = (rows || []).map((r) => {
         try {
           const parsed = JSON.parse(r.data_json)
           return { ...parsed, id: r.id, title: r.title, updatedAt: r.updated_at, createdAt: r.created_at }
@@ -55,7 +55,7 @@ export function createTripRouter(db) {
 
       const fullTrip = { ...tripData, id: tripId, title, createdAt: now, updatedAt: now }
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO trips (id, user_id, title, data_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(tripId, userId, title, JSON.stringify(fullTrip), now, now)
@@ -70,7 +70,7 @@ export function createTripRouter(db) {
 
       // GET /api/trips/:id (Row-level ownership: returns 404 if not found or belongs to another user)
       if (req.method === 'GET') {
-        const row = db.prepare('SELECT data_json FROM trips WHERE id = ? AND user_id = ?').get(tripId, userId)
+        const row = await db.prepare('SELECT data_json FROM trips WHERE id = ? AND user_id = ?').get(tripId, userId)
         if (!row) {
           return sendJson(res, 404, { error: 'Trip not found' })
         }
@@ -83,7 +83,7 @@ export function createTripRouter(db) {
 
       // PUT /api/trips/:id
       if (req.method === 'PUT') {
-        const existing = db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(tripId, userId)
+        const existing = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(tripId, userId)
         if (!existing) {
           return sendJson(res, 404, { error: 'Trip not found' })
         }
@@ -93,7 +93,7 @@ export function createTripRouter(db) {
         const fullTrip = { ...updateData, id: tripId, updatedAt: now }
         const title = updateData.title || 'Untitled Trip'
 
-        db.prepare(`
+        await db.prepare(`
           UPDATE trips
           SET title = ?, data_json = ?, updated_at = ?
           WHERE id = ? AND user_id = ?
@@ -104,7 +104,7 @@ export function createTripRouter(db) {
 
       // DELETE /api/trips/:id
       if (req.method === 'DELETE') {
-        const resDel = db.prepare('DELETE FROM trips WHERE id = ? AND user_id = ?').run(tripId, userId)
+        const resDel = await db.prepare('DELETE FROM trips WHERE id = ? AND user_id = ?').run(tripId, userId)
         if (resDel.changes === 0) {
           return sendJson(res, 404, { error: 'Trip not found' })
         }

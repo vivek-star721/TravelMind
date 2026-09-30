@@ -16,7 +16,7 @@ export function checkLockout(user) {
   return { locked: false }
 }
 
-export function recordFailedLogin(db, user) {
+export async function recordFailedLogin(db, user) {
   if (!user) return
   const failed = (user.failed_logins || 0) + 1
   let lockedUntil = null
@@ -25,7 +25,7 @@ export function recordFailedLogin(db, user) {
     lockedUntil = new Date(Date.now() + LOCKOUT_DURATION_MS).toISOString()
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE users
     SET failed_logins = ?, locked_until = ?
     WHERE id = ?
@@ -34,9 +34,9 @@ export function recordFailedLogin(db, user) {
   return { failed, lockedUntil }
 }
 
-export function resetFailedLogins(db, userId) {
+export async function resetFailedLogins(db, userId) {
   if (!userId) return
-  db.prepare(`
+  await db.prepare(`
     UPDATE users
     SET failed_logins = 0, locked_until = NULL
     WHERE id = ?

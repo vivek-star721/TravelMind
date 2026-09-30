@@ -5,6 +5,8 @@ import { navigate, Link } from '../../lib/router'
 
 import { api } from '../../lib/api'
 
+import { formatErrorMessage } from '../../lib/errorUtils'
+
 export default function LoginPage() {
   const { login, loginWithGoogle, error: authError, clearError } = useAuth()
   const [email, setEmail] = useState('')
@@ -42,6 +44,8 @@ export default function LoginPage() {
       } else {
         navigate('/')
       }
+    } else if (result.error) {
+      setLocalError(formatErrorMessage(result.error))
     }
   }
 
@@ -61,6 +65,8 @@ export default function LoginPage() {
       } else {
         navigate('/')
       }
+    } else if (result.error) {
+      setLocalError(formatErrorMessage(result.error))
     }
   }
 
@@ -83,16 +89,17 @@ export default function LoginPage() {
       if (data?.success) {
         setForgotSent(true)
       } else {
-        setLocalError(data?.error || 'Failed to send reset email')
+        setLocalError(formatErrorMessage(data?.error, 'Failed to send reset email'))
       }
     } catch (err) {
-      setLocalError(err.message || 'Network error while requesting password reset.')
+      setLocalError(formatErrorMessage(err, 'Network error while requesting password reset.'))
     } finally {
       setForgotLoading(false)
     }
   }
 
-  const displayError = localError || authError
+  const rawError = localError || authError
+  const displayError = rawError ? formatErrorMessage(rawError) : ''
 
   return (
     <div className="min-h-full flex flex-col justify-center bg-gradient-to-br from-ink-100 via-brand-50/40 to-ink-50 px-4 py-8 sm:px-6 lg:px-8">

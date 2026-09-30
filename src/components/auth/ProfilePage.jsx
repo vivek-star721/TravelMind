@@ -6,6 +6,7 @@ import {
 import { useAuth } from '../../agent/authStore'
 import { useTrip } from '../../store'
 import { navigate } from '../../lib/router'
+import { formatErrorMessage } from '../../lib/errorUtils'
 
 const TRAVEL_STYLES = [
   { id: 'balanced', label: 'Balanced' },
@@ -99,7 +100,7 @@ export default function ProfilePage() {
       setProfileSuccess('Profile updated successfully!')
       setTimeout(() => setProfileSuccess(''), 4000)
     } else {
-      setProfileError(res.error || 'Failed to update profile')
+      setProfileError(formatErrorMessage(res.error, 'Failed to update profile'))
     }
   }
 
@@ -132,7 +133,7 @@ export default function ProfilePage() {
       setConfirmNewPassword('')
       setTimeout(() => setPasswordSuccess(''), 4000)
     } else {
-      setPasswordError(res.error || 'Failed to update password')
+      setPasswordError(formatErrorMessage(res.error, 'Failed to update password'))
     }
   }
 

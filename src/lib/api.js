@@ -8,6 +8,8 @@
  * - Handles JSON serialization and error parsing consistently
  */
 
+import { formatErrorMessage } from './errorUtils'
+
 const API_BASE = ''
 
 export class ApiError extends Error {
@@ -85,7 +87,7 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    const errorMsg = data?.error || data?.message || `Request failed with status ${response.status}`
+    const errorMsg = formatErrorMessage(data, `Request failed with status ${response.status}`)
     throw new ApiError(errorMsg, response.status, data)
   }
 

@@ -3,11 +3,11 @@ import { hashPassword } from './password.mjs'
 
 export async function bootstrapAdmin(db) {
   // Check if any admin exists
-  const existingAdmin = db.prepare("SELECT id, email FROM users WHERE role = 'admin'").get()
+  const existingAdmin = await db.prepare("SELECT id, email FROM users WHERE role = 'admin'").get()
   if (existingAdmin) {
     if (process.env.ADMIN_PASSWORD) {
       const hashedPassword = await hashPassword(process.env.ADMIN_PASSWORD)
-      db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(hashedPassword, existingAdmin.id)
+      await db.prepare("UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?").run(hashedPassword, existingAdmin.id)
     }
     return { created: false, adminId: existingAdmin.id, email: existingAdmin.email }
   }
@@ -35,13 +35,13 @@ export async function bootstrapAdmin(db) {
   const adminId = 'admin-' + crypto.randomUUID().slice(0, 8)
   const now = new Date().toISOString()
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO users (id, email, display_name, password_hash, role, home_currency, locale, is_active, must_change_pw, created_at)
     VALUES (?, ?, 'Administrator', ?, 'admin', 'INR', 'en-IN', 1, ?, ?)
   `).run(adminId, adminEmail, hashedPassword, mustChangePw, now)
 
   // Log in audit_log
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO audit_log (id, actor_user_id, action, target, meta_json, ip, created_at)
     VALUES (?, ?, 'bootstrap_admin', ?, ?, '127.0.0.1', ?)
   `).run(
@@ -57,11 +57,11 @@ export async function bootstrapAdmin(db) {
 
 export async function bootstrapDemoUser(db) {
   const email = 'traveler@example.com'
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(email)
   if (existing) {
     if (process.env.DEMO_USER_PASSWORD) {
       const passwordHash = await hashPassword(process.env.DEMO_USER_PASSWORD)
-      db.prepare('UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?').run(passwordHash, existing.id)
+      await db.prepare('UPDATE users SET password_hash = ?, is_active = 1 WHERE id = ?').run(passwordHash, existing.id)
     }
     return { created: false, id: existing.id, email }
   }
@@ -71,7 +71,7 @@ export async function bootstrapDemoUser(db) {
   const passwordHash = await hashPassword(password)
   const now = new Date().toISOString()
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO users (
       id, email, display_name, password_hash, role,
       home_currency, locale, is_active, phone, home_city,
@@ -87,7 +87,7 @@ export async function bootstrapDemoUser(db) {
 
   // Seed initial sample trip for the demo user if missing
   const sampleTripId = 'trip-himachal-demo'
-  const existingTrip = db.prepare('SELECT id FROM trips WHERE id = ?').get(sampleTripId)
+  const existingTrip = await db.prepare('SELECT id FROM trips WHERE id = ?').get(sampleTripId)
   if (!existingTrip) {
     const sampleTrip = {
       id: sampleTripId,
@@ -126,7 +126,7 @@ export async function bootstrapDemoUser(db) {
       suggestions: []
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO trips (id, user_id, title, data_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(sampleTrip.id, userId, sampleTrip.title, JSON.stringify(sampleTrip), now, now)
