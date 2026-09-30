@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { POSTGRES_SCHEMA_SQL } from './schema.postgres.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, 'migrations')
@@ -8,9 +9,7 @@ const MIGRATIONS_DIR = join(__dirname, 'migrations')
 export async function runMigrations(db) {
   // If hosted Postgres (Neon / Vercel Postgres)
   if (db.isPostgres) {
-    const schemaPath = join(__dirname, 'schema.postgres.sql')
-    const schemaSql = readFileSync(schemaPath, 'utf8')
-    await db.exec(schemaSql)
+    await db.exec(POSTGRES_SCHEMA_SQL)
 
     const appliedRows = await db.prepare('SELECT id FROM _migrations').all()
     const appliedSet = new Set((appliedRows || []).map((r) => r.id))

@@ -5,6 +5,8 @@
  */
 
 import { getDb } from './db/index.mjs'
+import { runMigrations } from './db/migrate.mjs'
+import { bootstrapAdmin, bootstrapDemoUser } from './auth/bootstrap.mjs'
 import { verifyCsrf, isOriginAllowed } from './auth/csrf.mjs'
 import { createAuthRouter } from './auth/routes.mjs'
 import { createAdminRouter } from './admin/routes.mjs'
@@ -18,6 +20,32 @@ let cachedDb = null
 let authRouter = null
 let adminRouter = null
 let tripRouter = null
+let schemaEnsured = false
+
+export async function ensureSchema(db) {
+  if (schemaEnsured || !db) return
+  if (!db.isPostgres) {
+    schemaEnsured = true
+    return
+  }
+
+  try {
+    const tableCheck = await db.prepare(
+      "SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1"
+    ).get()
+
+    if (!tableCheck) {
+      console.log('[db] PostgreSQL tables not found. Automatically running initial migrations...')
+      await runMigrations(db)
+      await bootstrapAdmin(db)
+      await bootstrapDemoUser(db)
+      console.log('[db] Initial migrations and demo traveler bootstrap complete.')
+    }
+    schemaEnsured = true
+  } catch (err) {
+    console.error('[db] Error in ensureSchema:', err)
+  }
+}
 
 export function getRouters(db = null) {
   const activeDb = db || getDb()
@@ -79,7 +107,10 @@ export async function handleApiRequest(req, res, options = {}) {
   const { db, authRouter: authR, adminRouter: adminR, tripRouter: tripR } = getRouters(options.db)
 
   try {
-    // 0. CORS & Preflight (OPTIONS)
+    // 0. Ensure database tables exist on hosted Postgres
+    await ensureSchema(db)
+
+    // 1. CORS & Preflight (OPTIONS)
     const origin = req.headers['origin']
     if (origin && isOriginAllowed(origin, port, req)) {
       res.setHeader('Access-Control-Allow-Origin', origin)

@@ -16,7 +16,17 @@ export function handleServerError(err, req, res) {
   if (!res.headersSent) {
     const isClientError = err?.statusCode >= 400 && err?.statusCode < 500
     const statusCode = isClientError ? err.statusCode : 500
-    const message = isClientError ? err.message : 'Internal Server Error'
+    let message = isClientError ? err.message : 'Internal Server Error'
+
+    if (!isClientError && err?.message) {
+      if (err.message.includes('relation') && err.message.includes('does not exist')) {
+        message = 'Database tables not initialized. Please run npm run db:migrate.'
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.message.includes('connect')) {
+        message = 'Cannot connect to database. Please verify TRAVELMINDS_DATABASE_URL.'
+      } else if (err.code === '28P01' || err.message.includes('password authentication failed')) {
+        message = 'Database authentication failed. Please check TRAVELMINDS_DATABASE_URL password.'
+      }
+    }
 
     const payload = JSON.stringify({
       error: message,
